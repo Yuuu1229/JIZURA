@@ -214,6 +214,9 @@ function cutTechOf(ov, k) {
 J.plan = (project, audio) => {
   const st = J.resolveStyle(project);
   const fx = Object.assign({}, J.defaultProject().fx, project.fx || {});
+  // A curated style may cap intensity without mutating saved slider values.
+  for (const [k, max] of Object.entries(st.fxMax || {})) fx[k] = Math.min(fx[k], max);
+  Object.assign(fx, st.fxFixed || {});
   const parsed = J.parseLyrics(project.lyrics);
   const title = project.title || parsed.meta.ti || '';
   const artist = project.artist || parsed.meta.ar || '';
@@ -341,12 +344,13 @@ J.plan = (project, audio) => {
       const emph = kime || ln.impact && (k === 0 || u.recap) || ln.emph.some(w => u.text.includes(w));
       const Z = zoneOf(li), LW = Z ? Z.w : W, LH = Z ? Z.h : H;       // the frame this cut is laid out in
       const UU = U && !ovAny ? U : null;                              // per-line settings always win over 統一感
+      const semantic = fsrSemantic(st, ln.text);
       const tech = cutTechOf(ov, k);                                  // このカットだけの指定
-      let layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, st, en, nn, dur, history, emph, u.recap, LH > LW);
+      let layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, st, en, nn, dur, history, emph, u.recap, LH > LW, semantic);
       if (UU) layout = UU.layout(li, layout, { nn, dur, emph, kime, rng, portrait: LH > LW, recap: u.recap });
-      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, st, en, layout, dur, history, emph, nn);
-      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, st, en, layout, dur, k === units.length - 1, history);
-      let hold = ov.hold && J.HOLD[ov.hold] ? ov.hold : pickHold(rng, en, fx, history);
+      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, st, en, layout, dur, history, emph, nn, semantic);
+      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, st, en, layout, dur, k === units.length - 1, history, semantic);
+      let hold = ov.hold && J.HOLD[ov.hold] ? ov.hold : pickHold(rng, en, fx, history, semantic);
       let weightGrow = false;
       if (UU) {
         enter = UU.enter(li, enter, { layout, dur, emph, kime, rng, nn });
@@ -372,13 +376,13 @@ J.plan = (project, audio) => {
       if (!U && nSchemes > 1 && k > 0 && rng.chance(0.12 * fx.bgSwitch)) sch = (schemeIdx + 1) % nSchemes;
       let LD = J.LAYOUTS[layout];
       let params = LD.plan(rng, { text: txt, n: nn, W: LW, H: LH, dur }, st);
-      let decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, st, en, fx, layout, history);
-      let treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, st, en, fx, LD, emph, history);
+      let decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, st, en, fx, layout, history, semantic);
+      let treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, st, en, fx, LD, emph, history, semantic);
       if (UU) { decor = UU.decor(li, decor, { layout, kime, rng }); treat = UU.treat(li, treat, { kime, rng, LD }); }
       let treatP = J.TREAT[treat].plan ? J.TREAT[treat].plan(rng, st) : {};
       if (!ov.bg && k > 0 && !U && rng.chance(0.18 * fx.bgSwitch + 0.04)) { lineBg = pickBg(rng, st, en, fx, bgHistory); lineBgP = J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, st) : {}; }
       let bg = LD.busy && !(J.BG[lineBg] && J.BG[lineBg].subtle) ? 'none' : lineBg;
-      let cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, st, en, fx, LD, emph, history);
+      let cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, st, en, fx, LD, emph, history, semantic);
       if (UU) cam = UU.cam(li, cam, { kime, emph, rng });
       let camP = J.CAMERA[cam].plan ? J.CAMERA[cam].plan(rng, st) : {};
       let cutSeed = J.h(lineSeed, k, 17);
@@ -480,6 +484,7 @@ J.plan = (project, audio) => {
       const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, seed: cutSeed, emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: techBgP || (bg === lineBg ? lineBgP : {}), cam, camP, trans, transP, transDur, zone: Z, utext: u.text });
       if (kime || (LS && LS.kime)) cut.kime = true;
+      if (semantic) cut.semantic = semantic;
       if (weightGrow) cut.weightGrow = true;
       if (morph) cut.morph = morph;
       if (UU) UU.remember(li, k, txt, cut);
@@ -755,12 +760,12 @@ function novelty(history, key, val) {
   return w;
 }
 const PORTRAIT_W = { vcols: 1.9, condensed: 1.3, huge: 1.3, center: 1.2, stack: 1.1, mixed: 0.7, marquee: 0.6, wave: 0.6, diag: 0.8, type: 0.8, gloss: 0.5 };
-function pickLayout(rng, st, en, n, dur, history, emph, recap, portrait) {
+function pickLayout(rng, st, en, n, dur, history, emph, recap, portrait, semantic) {
   const cands = [];
   for (const k of J.LAYOUT_ORDER) {
     const L = J.LAYOUTS[k];
     if (!en.layout[k] || !L.fits(n)) continue;
-    let w = wkey(st.bias.layout, k, L.w ?? 1) * novelty(history, 'layout', k);
+    let w = wkey(st.bias.layout, k, L.w ?? 1) * novelty(history, 'layout', k) * fsrSemanticWeight(semantic, 'layout', k);
     if (portrait) w *= L.portrait != null ? L.portrait : wkey(PORTRAIT_W, k, 1);
     if (emph && L.emph) w *= L.emph;
     if (emph && ['huge', 'center', 'tile', 'marquee', 'condensed'].includes(k)) w *= 2;
@@ -777,13 +782,13 @@ const LAYOUT_ENTER = {
   wave: { pop: 1.5, drop: 1.5, blur: 1, slice: 0.3 }, tile: { assemble: 1.3, slice: 1.4, zoom: 1.4 }, huge: { zoom: 1.5, wipe: 1.5, slice: 1.4, stretch: 1.3, type: 0.2 },
   mixed: { pop: 1.6, drop: 1.6, spin: 1.3 }, scatter: { pop: 1.5, spin: 1.5, drop: 1.2, assemble: 1.3 }, vcols: { assemble: 1.8, type: 1.2 }, pill: { wipe: 1.8, type: 1.2 },
 };
-function pickEnter(rng, st, en, layout, dur, history, emph, n) {
+function pickEnter(rng, st, en, layout, dur, history, emph, n, semantic) {
   const cands = [];
   for (const k of J.ENTER_ORDER) {
     if (!en.enter[k]) continue;
     const D = J.ENTER[k]; if (!D) continue;
     const LD = J.LAYOUTS[layout] || {};
-    let w = wkey(st.bias.enter, k, D.w ?? 1) * novelty(history, 'enter', k) * wkey(LAYOUT_ENTER[layout] || LD.enterBias, k, 1);
+    let w = wkey(st.bias.enter, k, D.w ?? 1) * novelty(history, 'enter', k) * wkey(LAYOUT_ENTER[layout] || LD.enterBias, k, 1) * fsrSemanticWeight(semantic, 'enter', k);
     if (D.minDur && dur < D.minDur) w *= 0.15;
     if (D.maxChars && n > D.maxChars) w *= 0.2;
     if (k === 'cut') w *= 0.5;
@@ -795,12 +800,12 @@ function pickEnter(rng, st, en, layout, dur, history, emph, n) {
   }
   return cands.length ? rng.wpick(cands) : 'cut';
 }
-function pickExit(rng, st, en, layout, dur, lastOfLine, history) {
+function pickExit(rng, st, en, layout, dur, lastOfLine, history, semantic) {
   const cands = [];
   for (const k of J.EXIT_ORDER) {
     if (!en.exit[k]) continue;
     const D = J.EXIT[k]; if (!D) continue;
-    let w = wkey(st.bias.exit, k, D.w ?? 1) * novelty(history, 'exit', k);
+    let w = wkey(st.bias.exit, k, D.w ?? 1) * novelty(history, 'exit', k) * fsrSemanticWeight(semantic, 'exit', k);
     if (D.minDur && dur < D.minDur) w *= 0.15;
     if (k === 'cut') w *= dur < 0.6 ? 4 : lastOfLine ? 1.2 : 2.2;
     if (dur < 0.6 && k !== 'cut') w *= 0.4;
@@ -810,25 +815,25 @@ function pickExit(rng, st, en, layout, dur, lastOfLine, history) {
   return cands.length ? rng.wpick(cands) : 'cut';
 }
 const HOLD_W = { still: 1, jitter: 1.2, drift: 1, breathe: 0.7, wave: 0.4, glitchtick: 0.9 };
-function pickHold(rng, en, fx, history) {
+function pickHold(rng, en, fx, history, semantic) {
   const cands = J.HOLD_ORDER.filter(k => en.hold[k] !== false && J.HOLD[k]).map(k => {
     const D = J.HOLD[k];
     let w = HOLD_W[k] != null ? HOLD_W[k] : (D.w ?? 0.8);
     if (k === 'jitter' || (D.tags && D.tags.includes('glitch'))) w *= 0.4 + fx.motion;
     if (k === 'glitchtick') w *= fx.glitch;
-    return [k, w * novelty(history, 'hold', k)];
+    return [k, w * novelty(history, 'hold', k) * fsrSemanticWeight(semantic, 'hold', k)];
   });
   return cands.length ? rng.wpick(cands) : 'still';
 }
 function decorParams(rng, k) {
   return { id: k, seed: rng.int(1, 1e9), n: rng.int(1, 3) + (k === 'shapes' ? 3 : 0) + (k === 'sparks' ? 4 : 0), right: rng.chance(0.5), low: rng.chance(0.5), accent: rng.chance(0.4), corner: rng.chance(0.5), big: rng.chance(0.4), mode: rng.pick(['count', 'index']), from: rng.int(0, 20), to: rng.int(30, 999), v: rng.int(0, 5), r: rng() };
 }
-function pickDecor(rng, st, en, fx, layout, history = []) {
+function pickDecor(rng, st, en, fx, layout, history = [], semantic) {
   const count = Math.round(fx.decor * 2.8 * rng.range(0.45, 1.15));
   const recent = new Set(history.slice(-2).flatMap(h => h.decor || []));
   const LD = J.LAYOUTS[layout] || {};
   const cands = J.DECOR_ORDER.filter(k => en.decor[k] && J.DECOR[k] && !(LD.busy && J.DECOR[k].layer === 'back' && !J.DECOR[k].subtle))
-    .map(k => [k, wkey(st.decor, k, J.DECOR[k].w != null ? J.DECOR[k].w * 0.5 : 0.35) * (recent.has(k) ? 0.35 : 1)]);
+    .map(k => [k, wkey(st.decor, k, J.DECOR[k].w != null ? J.DECOR[k].w * 0.5 : 0.35) * (recent.has(k) ? (st.recentDecorWeight ?? 0.35) : 1) * fsrSemanticWeight(semantic, 'decor', k)]);
   const out = [];
   for (let i = 0; i < count && cands.length; i++) {
     const k = rng.wpick(cands);
@@ -838,24 +843,25 @@ function pickDecor(rng, st, en, fx, layout, history = []) {
   return out;
 }
 // text treatment: plain most of the time; the "decor" slider raises how often a treatment is used
-function pickTreat(rng, st, en, fx, LD, emph, history) {
+function pickTreat(rng, st, en, fx, LD, emph, history, semantic) {
   if (LD.treat === false) return 'none';
   if (!rng.chance(0.18 + 0.42 * (fx.decor ?? 0.5) + (emph ? 0.15 : 0))) return 'none';
   const cands = J.TREAT_ORDER.filter(k => k !== 'none' && en.treat && en.treat[k] !== false && J.TREAT[k] && (LD.treat !== 'safe' || J.TREAT[k].safe))
-    .map(k => [k, wkey(st.bias && st.bias.treat, k, J.TREAT[k].w ?? 1) * novelty(history, 'treat', k)]);
+    .map(k => [k, wkey(st.bias && st.bias.treat, k, J.TREAT[k].w ?? 1) * novelty(history, 'treat', k) * fsrSemanticWeight(semantic, 'treat', k)]);
   return cands.length ? rng.wpick(cands) : 'none';
 }
 function pickBg(rng, st, en, fx, bgHist) {
+  if (st.background && en.bg[st.background]) return st.background;
   if (!rng.chance(0.2 + 0.35 * (fx.decor ?? 0.5) + 0.2 * (fx.bgSwitch ?? 0.35))) return 'none';
   const last = bgHist.slice(-3);
   const cands = J.BG_ORDER.filter(k => k !== 'none' && en.bg && en.bg[k] !== false && J.BG[k])
     .map(k => [k, wkey(st.bias && st.bias.bg, k, J.BG[k].w ?? 1) * (last.includes(k) ? 0.25 : 1)]);
   return cands.length ? rng.wpick(cands) : 'none';
 }
-function pickCam(rng, st, en, fx, LD, emph, history) {
+function pickCam(rng, st, en, fx, LD, emph, history, semantic) {
   const cands = J.CAMERA_ORDER.filter(k => en.cam && en.cam[k] !== false && J.CAMERA[k]).map(k => {
     const D = J.CAMERA[k];
-    let w = wkey(st.bias && st.bias.cam, k, D.w ?? 1) * novelty(history, 'cam', k);
+    let w = wkey(st.bias && st.bias.cam, k, D.w ?? 1) * novelty(history, 'cam', k) * fsrSemanticWeight(semantic, 'cam', k);
     if (D.strong) w *= 0.25 + 0.9 * (fx.motion ?? 0.7) + (emph ? 0.6 : 0);
     if (LD.cam === false && k !== 'push') w *= 0.05;
     return [k, w];
@@ -879,6 +885,63 @@ function pickFx(rng, st, en, fx, emph, fxHist, kind) {
     .map(k => { const D = J.FXE[k]; let w = wkey(st.bias && st.bias.fx, k, D.w ?? 1) * (last.includes(k) ? 0.2 : 1); if (D.glitchy) w *= 0.3 + g * 1.4; return [k, w]; });
   return cands.length ? rng.wpick(cands) : null;
 }
+
+/* Per-cut Future Sky Road rerolls use the SAME pickers as the full planner.
+   The UI stores the result as cutTech overrides; other styles keep their old path. */
+J.rerollFutureSkyCut = (project, cut, groups, fixed = [], history = [], rng) => {
+  if (project.style !== 'futureSkyRoad') return null;
+  rng = rng || J.rng((Math.random() * 1e9) | 0);
+  const st = J.resolveStyle(project), semantic = fsrSemantic(st, cut.text);
+  const fx = Object.assign({}, J.defaultProject().fx, project.fx || {});
+  for (const [k, max] of Object.entries(st.fxMax || {})) fx[k] = Math.min(fx[k], max);
+  Object.assign(fx, st.fxFixed || {});
+  const en = {};
+  for (const g of J.GROUP_KEYS) {
+    en[g] = {};
+    for (const key of J.order(g)) en[g][key] = !J.registry(g)[key].special &&
+      ((project.enabled || {})[g] || {})[key] !== false && J.randomOk(project, g, key);
+  }
+  const n = [...String(cut.text || '').replace(/\s+/g, '')].length;
+  const dur = cut.dur || cut.end - cut.start;
+  const [W, H] = J.designSize(project.aspect || '16:9');
+  const portrait = cut.zone ? cut.zone.h > cut.zone.w : H > W;
+  const current = g => g === 'decor' ? ((cut.decor || []).map(d => d.id).join('|') || 'none') : cut[g] || 'none';
+  const active = groups.filter(g => !fixed.includes(g));
+  const hist = history.map(c => Object.assign({}, c, { decor: (c.decor || []).map(d => typeof d === 'string' ? d : d.id) }));
+  function draw(enabled, requested = active) {
+    const out = {}, has = g => Object.values(enabled[g] || {}).some(Boolean);
+    const use = g => requested.includes(g) && has(g);
+    if (use('layout')) {
+      const fits = J.LAYOUT_ORDER.some(k => enabled.layout[k] && J.LAYOUTS[k].fits(n));
+      if (fits) out.layout = pickLayout(rng, st, enabled, n, dur, hist, cut.emph, cut.recap, portrait, semantic);
+    }
+    const layout = out.layout || cut.layout, LD = J.LAYOUTS[layout];
+    if (use('enter')) out.enter = pickEnter(rng, st, enabled, layout, dur, hist, cut.emph, n, semantic);
+    if (use('exit')) out.exit = pickExit(rng, st, enabled, layout, dur, true, hist, semantic);
+    if (use('hold')) out.hold = pickHold(rng, enabled, fx, hist, semantic);
+    if (use('decor')) out.decor = pickDecor(rng, st, enabled, fx, layout, hist, semantic)[0]?.id || 'none';
+    if (use('treat')) out.treat = project.typeset && (out.decor || current('decor')) !== 'none'
+      ? 'none' : pickTreat(rng, st, enabled, fx, LD, cut.emph, hist, semantic);
+    if (use('bg')) out.bg = pickBg(rng, st, enabled, fx, []);
+    if (use('cam')) out.cam = pickCam(rng, st, enabled, fx, LD, cut.emph, hist, semantic);
+    if (requested.includes('trans')) out.trans = 'none'; // style has no automatic transitions
+    return out;
+  }
+  const changed = out => Object.keys(out).some(g => out[g] !== current(g));
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const out = draw(en);
+    if (changed(out)) return out;
+  }
+  // A constrained pool may keep giving the same recipe. Exclude one current
+  // component and resample through its normal weighted picker. Never force an ID.
+  for (const g of active) {
+    if (!en[g] || current(g) === 'none') continue;
+    const alternatives = Object.assign({}, en, { [g]: Object.assign({}, en[g], { [current(g)]: false }) });
+    const out = draw(alternatives, [g]);
+    if (changed(out)) return out;
+  }
+  return {}; // all choices pinned/disabled, or no different eligible combination
+};
 
 /* one-cut (or two-cut, for transitions) plan used by the 手法 tab thumbnails */
 J.previewPlan = (project, group, key) => {

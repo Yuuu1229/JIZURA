@@ -8,6 +8,8 @@ The Japanese, English, Indonesian, Vietnamese, Traditional Chinese, Simplified C
 
 **Version: v0.9.0** (see [CHANGELOG.md](CHANGELOG.md))
 
+This fork also includes **Future Sky Road**, a quiet sky-and-journey style with pale palettes, spacious Japanese sans-serif lyrics and paired perspective lines. Select it in **Advanced → Style**. See [style notes and verification](docs/FUTURE_SKY_ROAD.md).
+
 <details>
 <summary><h2>Quick start</h2></summary>
 

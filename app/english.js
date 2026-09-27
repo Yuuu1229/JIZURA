@@ -4,6 +4,8 @@
   'use strict';
   const titles = {
     layout: {
+      fsrPoem: 'Poem in the sky', fsrOpenSky: 'Open Sky', fsrParallelJourney: 'Parallel Journey',
+      fsrTwinBalance: 'Twin Balance', fsrLowGround: 'Low Ground', fsrDriftingMemory: 'Drifting Memory',
       vcols: 'Vertical text', marquee: 'Scrolling banner', tile: 'Tiled text',
       huge: 'Oversized text', gloss: 'Annotation', diag: 'Diagonal band',
       stack: 'Echo stack', lowerThird: 'Lower third', corners: 'Opposite corners',
@@ -32,6 +34,7 @@
       halftoneBig: 'Oversized halftone text'
     },
     enter: {
+      fsrSoftIn: 'Soft Arrival',
       assemble: 'Break apart and assemble', riseMask: 'Reveal from below',
       dropMask: 'Reveal from above', slideL: 'Slide from left', slideR: 'Slide from right',
       slideWhole: 'Slide in together', flipX: 'Flip on vertical axis',
@@ -55,6 +58,7 @@
       shadowFirst: 'Shadow first', tokoroten: 'Extruded noodles'
     },
     hold: {
+      fsrTwinSway: 'Twin Sway', fsrTravel: 'Gentle Horizontal Drift', fsrRise: 'Slow Upward Rise',
       still: 'Still', breathe: 'Breathe', glitchtick: 'Glitch tick',
       colorRun: 'Traveling color', trackBreathe: 'Breathing letter spacing',
       beatHop: 'Hop to the beat', hWave: 'Horizontal wave',
@@ -69,6 +73,7 @@
       pluckString: 'Plucked string'
     },
     exit: {
+      fsrSoftOut: 'Soft Dissolve',
       fall: 'Crumble and fall', drift: 'Drift away', sinkMask: 'Sink out',
       riseOut: 'Rise out', slideOutL: 'Slide left', slideOutR: 'Slide right',
       flipOutX: 'Doors close', flipOutY: 'Flip down',
@@ -97,6 +102,8 @@
       scribbleOut: 'Scribble away', candleOut: 'Blow out'
     },
     decor: {
+      fsrRoadLines: 'Road Lines', fsrHorizonGlow: 'Horizon Glow', fsrCloudHaze: 'Soft Cloud Haze',
+      fsrWindTrails: 'Wind Trails', fsrTwinShadows: 'Twin Shadows', fsrDiffuseBleed: 'Diffuse Bleed',
       brackets: 'Corner marks', rings: 'Coordinate rings', dots: 'Dotted ring',
       leaders: 'Leader lines', blobs: 'Ink stains', bars: 'Rough bands',
       counter: 'Large numbers', cropMarks: 'Crop marks',
@@ -141,6 +148,7 @@
       spotChar: 'Highlighted character', ransom: 'Cutout letters'
     },
     bg: {
+      fsrSkyRoad: 'Future sky and road', fsrSkyWash: 'Pale Sky',
       none: 'Solid color', seigaiha: 'Seigaiha waves',
       asanoha: 'Asanoha pattern', topoLines: 'Contour lines',
       ridgePlot: 'Mountain ridges', nightMoon: 'Moonlit night',
@@ -154,6 +162,7 @@
       letterbox: 'Cinema letterbox', noiseField: 'Moving noise'
     },
     cam: {
+      fsrHorizon: 'Horizon Push',
       push: 'Slow push in', rackFocus: 'Rack focus',
       floatNoise: 'Floating camera', vertigo: 'Dolly zoom',
       spiralIn: 'Spiral zoom', jelly: 'Elastic wobble',
@@ -199,6 +208,7 @@
     }
   }
   const styles = {
+    futureSkyRoad: ['Future Sky Road', 'Pale skies, paired roads and quiet hope. Curated gentle motion with restrained effects.'],
     noir: ['Noir Chroma', 'Black and white with cyan and amber color offsets'],
     crimson: ['Crimson Signal', 'Deep red, monochrome type and damaged data'],
     caution: ['Caution', 'Yellow, red and blue with instrument graphics'],

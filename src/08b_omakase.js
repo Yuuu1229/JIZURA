@@ -64,9 +64,10 @@ J.omakase = (project, rnd = Math.random) => {
   // technique subset per group: everything tagged with the mood (plus the mood's hand-picked core items),
   // a sprinkle of everything else, and a minimum count so the planner always has room to vary
   const enabled = {};
+  const pickProject = Object.assign({}, project, { style });
   const MIN = { layout: 6, enter: 5, exit: 5, hold: 3, decor: 6, treat: 4, bg: 4, cam: 3, fx: 4, trans: 3 };
   for (const g of J.GROUP_KEYS) {
-    const order = J.order(g).filter(k => !(J.registry(g)[k] || {}).special && (!J.randomOk || J.randomOk(project, g, k)) && moodSetOk(J.registry(g)[k]));
+    const order = J.order(g).filter(k => !(J.registry(g)[k] || {}).special && (!J.randomOk || J.randomOk(pickProject, g, k)) && moodSetOk(J.registry(g)[k]));
     const hand = ['layout', 'enter', 'exit'].includes(g) && Array.isArray(M[g]) ? M[g] : [];   // (M.fx holds slider ranges, not a list)
     const prefer = mood === 'chaos' ? null : new Set([...hand, ...J.taggedWith(g, mood)]);
     const on = {};
@@ -96,6 +97,12 @@ J.omakase = (project, rnd = Math.random) => {
     const bg = J.STYLES[style].schemes[0].bg;
     Object.assign(colors, J.randomPalette(bg, rnd), { accentOn: true });
     delete colors.mode;
+  }
+  // Curated styles retain their type/palette when Randomize chooses them.
+  // Explicit font/colour edits outside Randomize remain available.
+  if (J.STYLES[style].parts) {
+    for (const k of Object.keys(fonts)) delete fonts[k];
+    colors.enabled = false; colors.accentOn = false;
   }
   // keep locked lines, drop other per-line picks
   const overrides = {};

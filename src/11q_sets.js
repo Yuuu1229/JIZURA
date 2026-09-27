@@ -48,7 +48,10 @@ J.setOf = (g, k) => { const d = def(g, k); return (d && d.set) || null; };
 /* may random picks use this entry? (g: a group key, 'style' or 'font') — 追加分 first, then 和風 */
 J.randomOk = (project, g, k) => {
   const d = def(g, k); if (!d) return false;
-  if (d.extra && !(project && project.extra === true)) return false;
+  if (d.styleOnly && (!project || project.style !== d.styleOnly)) return false;
+  const st = project && J.STYLES[project.style], parts = st && st.parts && st.parts[g];
+  if (parts && !parts.includes(k)) return false;
+  if (!parts && d.extra && !(project && project.extra === true)) return false;
   if (d.wa && project && project.wa === false) return false;
   if (d.set && !J.setOn(project, d.set)) return false;
   return true;

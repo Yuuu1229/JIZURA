@@ -3365,6 +3365,36 @@ J.drawHUD = (env, plan) => {
 };
 })();
 
+/* Shared browser / AE (ES3) lyric weighting. Pure analysis: never draws randomness,
+   changes text, mutates a style or performs network requests. Only opt-in styles. */
+function fsrSemantic(st, text) {
+    if (!st.lyricRules) return null;
+    // ES3-safe compatibility normalization; retain the original lyric for rendering.
+    var s = String(text || '').replace(/[\uFF01-\uFF5E]/g, function(c) { return String.fromCharCode(c.charCodeAt(0) - 65248); }).toLowerCase().replace(/[\s\u3000]+/g, ' ');
+    var out = { tags: [], matches: {}, weights: {} }, i, j, g, k;
+    for (i = 0; i < st.lyricRules.length; i++) {
+        var rule = st.lyricRules[i], hits = [];
+        for (j = 0; j < rule.words.length; j++) {
+            var word = rule.words[j], found;
+            // Latin words/phrases use boundaries: 'run' must not match 'trunk'.
+            if (/^[a-z ]+$/.test(word)) found = new RegExp('(^|[^a-z0-9])' + word.replace(/ /g, '\\s+') + '($|[^a-z0-9])', 'i').test(s);
+            else found = s.indexOf(word) >= 0;
+            if (found) hits.push(word);
+        }
+        if (!hits.length) continue;
+        out.tags.push(rule.tag); out.matches[rule.tag] = hits;
+        // Count each tag once; multiple related words cannot swamp the pool.
+        for (g in rule.weights) {
+            if (!out.weights[g]) out.weights[g] = {};
+            for (k in rule.weights[g]) out.weights[g][k] = Math.min(3.2, (out.weights[g][k] || 1) + rule.weights[g][k] - 1);
+        }
+    }
+    return out;
+}
+function fsrSemanticWeight(semantic, group, key) {
+    return semantic && semantic.weights[group] && semantic.weights[group][key] || 1;
+}
+
 /* ============================================================
    JIZURA — planner: lyrics -> lines -> chunks -> timed cuts + events
    ============================================================ */
@@ -3581,6 +3611,9 @@ function cutTechOf(ov, k) {
 J.plan = (project, audio) => {
   const st = J.resolveStyle(project);
   const fx = Object.assign({}, J.defaultProject().fx, project.fx || {});
+  // A curated style may cap intensity without mutating saved slider values.
+  for (const [k, max] of Object.entries(st.fxMax || {})) fx[k] = Math.min(fx[k], max);
+  Object.assign(fx, st.fxFixed || {});
   const parsed = J.parseLyrics(project.lyrics);
   const title = project.title || parsed.meta.ti || '';
   const artist = project.artist || parsed.meta.ar || '';
@@ -3708,12 +3741,13 @@ J.plan = (project, audio) => {
       const emph = kime || ln.impact && (k === 0 || u.recap) || ln.emph.some(w => u.text.includes(w));
       const Z = zoneOf(li), LW = Z ? Z.w : W, LH = Z ? Z.h : H;       // the frame this cut is laid out in
       const UU = U && !ovAny ? U : null;                              // per-line settings always win over 統一感
+      const semantic = fsrSemantic(st, ln.text);
       const tech = cutTechOf(ov, k);                                  // このカットだけの指定
-      let layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, st, en, nn, dur, history, emph, u.recap, LH > LW);
+      let layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, st, en, nn, dur, history, emph, u.recap, LH > LW, semantic);
       if (UU) layout = UU.layout(li, layout, { nn, dur, emph, kime, rng, portrait: LH > LW, recap: u.recap });
-      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, st, en, layout, dur, history, emph, nn);
-      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, st, en, layout, dur, k === units.length - 1, history);
-      let hold = ov.hold && J.HOLD[ov.hold] ? ov.hold : pickHold(rng, en, fx, history);
+      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, st, en, layout, dur, history, emph, nn, semantic);
+      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, st, en, layout, dur, k === units.length - 1, history, semantic);
+      let hold = ov.hold && J.HOLD[ov.hold] ? ov.hold : pickHold(rng, en, fx, history, semantic);
       let weightGrow = false;
       if (UU) {
         enter = UU.enter(li, enter, { layout, dur, emph, kime, rng, nn });
@@ -3739,13 +3773,13 @@ J.plan = (project, audio) => {
       if (!U && nSchemes > 1 && k > 0 && rng.chance(0.12 * fx.bgSwitch)) sch = (schemeIdx + 1) % nSchemes;
       let LD = J.LAYOUTS[layout];
       let params = LD.plan(rng, { text: txt, n: nn, W: LW, H: LH, dur }, st);
-      let decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, st, en, fx, layout, history);
-      let treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, st, en, fx, LD, emph, history);
+      let decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, st, en, fx, layout, history, semantic);
+      let treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, st, en, fx, LD, emph, history, semantic);
       if (UU) { decor = UU.decor(li, decor, { layout, kime, rng }); treat = UU.treat(li, treat, { kime, rng, LD }); }
       let treatP = J.TREAT[treat].plan ? J.TREAT[treat].plan(rng, st) : {};
       if (!ov.bg && k > 0 && !U && rng.chance(0.18 * fx.bgSwitch + 0.04)) { lineBg = pickBg(rng, st, en, fx, bgHistory); lineBgP = J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, st) : {}; }
       let bg = LD.busy && !(J.BG[lineBg] && J.BG[lineBg].subtle) ? 'none' : lineBg;
-      let cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, st, en, fx, LD, emph, history);
+      let cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, st, en, fx, LD, emph, history, semantic);
       if (UU) cam = UU.cam(li, cam, { kime, emph, rng });
       let camP = J.CAMERA[cam].plan ? J.CAMERA[cam].plan(rng, st) : {};
       let cutSeed = J.h(lineSeed, k, 17);
@@ -3847,6 +3881,7 @@ J.plan = (project, audio) => {
       const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, seed: cutSeed, emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: techBgP || (bg === lineBg ? lineBgP : {}), cam, camP, trans, transP, transDur, zone: Z, utext: u.text });
       if (kime || (LS && LS.kime)) cut.kime = true;
+      if (semantic) cut.semantic = semantic;
       if (weightGrow) cut.weightGrow = true;
       if (morph) cut.morph = morph;
       if (UU) UU.remember(li, k, txt, cut);
@@ -4122,12 +4157,12 @@ function novelty(history, key, val) {
   return w;
 }
 const PORTRAIT_W = { vcols: 1.9, condensed: 1.3, huge: 1.3, center: 1.2, stack: 1.1, mixed: 0.7, marquee: 0.6, wave: 0.6, diag: 0.8, type: 0.8, gloss: 0.5 };
-function pickLayout(rng, st, en, n, dur, history, emph, recap, portrait) {
+function pickLayout(rng, st, en, n, dur, history, emph, recap, portrait, semantic) {
   const cands = [];
   for (const k of J.LAYOUT_ORDER) {
     const L = J.LAYOUTS[k];
     if (!en.layout[k] || !L.fits(n)) continue;
-    let w = wkey(st.bias.layout, k, L.w ?? 1) * novelty(history, 'layout', k);
+    let w = wkey(st.bias.layout, k, L.w ?? 1) * novelty(history, 'layout', k) * fsrSemanticWeight(semantic, 'layout', k);
     if (portrait) w *= L.portrait != null ? L.portrait : wkey(PORTRAIT_W, k, 1);
     if (emph && L.emph) w *= L.emph;
     if (emph && ['huge', 'center', 'tile', 'marquee', 'condensed'].includes(k)) w *= 2;
@@ -4144,13 +4179,13 @@ const LAYOUT_ENTER = {
   wave: { pop: 1.5, drop: 1.5, blur: 1, slice: 0.3 }, tile: { assemble: 1.3, slice: 1.4, zoom: 1.4 }, huge: { zoom: 1.5, wipe: 1.5, slice: 1.4, stretch: 1.3, type: 0.2 },
   mixed: { pop: 1.6, drop: 1.6, spin: 1.3 }, scatter: { pop: 1.5, spin: 1.5, drop: 1.2, assemble: 1.3 }, vcols: { assemble: 1.8, type: 1.2 }, pill: { wipe: 1.8, type: 1.2 },
 };
-function pickEnter(rng, st, en, layout, dur, history, emph, n) {
+function pickEnter(rng, st, en, layout, dur, history, emph, n, semantic) {
   const cands = [];
   for (const k of J.ENTER_ORDER) {
     if (!en.enter[k]) continue;
     const D = J.ENTER[k]; if (!D) continue;
     const LD = J.LAYOUTS[layout] || {};
-    let w = wkey(st.bias.enter, k, D.w ?? 1) * novelty(history, 'enter', k) * wkey(LAYOUT_ENTER[layout] || LD.enterBias, k, 1);
+    let w = wkey(st.bias.enter, k, D.w ?? 1) * novelty(history, 'enter', k) * wkey(LAYOUT_ENTER[layout] || LD.enterBias, k, 1) * fsrSemanticWeight(semantic, 'enter', k);
     if (D.minDur && dur < D.minDur) w *= 0.15;
     if (D.maxChars && n > D.maxChars) w *= 0.2;
     if (k === 'cut') w *= 0.5;
@@ -4162,12 +4197,12 @@ function pickEnter(rng, st, en, layout, dur, history, emph, n) {
   }
   return cands.length ? rng.wpick(cands) : 'cut';
 }
-function pickExit(rng, st, en, layout, dur, lastOfLine, history) {
+function pickExit(rng, st, en, layout, dur, lastOfLine, history, semantic) {
   const cands = [];
   for (const k of J.EXIT_ORDER) {
     if (!en.exit[k]) continue;
     const D = J.EXIT[k]; if (!D) continue;
-    let w = wkey(st.bias.exit, k, D.w ?? 1) * novelty(history, 'exit', k);
+    let w = wkey(st.bias.exit, k, D.w ?? 1) * novelty(history, 'exit', k) * fsrSemanticWeight(semantic, 'exit', k);
     if (D.minDur && dur < D.minDur) w *= 0.15;
     if (k === 'cut') w *= dur < 0.6 ? 4 : lastOfLine ? 1.2 : 2.2;
     if (dur < 0.6 && k !== 'cut') w *= 0.4;
@@ -4177,25 +4212,25 @@ function pickExit(rng, st, en, layout, dur, lastOfLine, history) {
   return cands.length ? rng.wpick(cands) : 'cut';
 }
 const HOLD_W = { still: 1, jitter: 1.2, drift: 1, breathe: 0.7, wave: 0.4, glitchtick: 0.9 };
-function pickHold(rng, en, fx, history) {
+function pickHold(rng, en, fx, history, semantic) {
   const cands = J.HOLD_ORDER.filter(k => en.hold[k] !== false && J.HOLD[k]).map(k => {
     const D = J.HOLD[k];
     let w = HOLD_W[k] != null ? HOLD_W[k] : (D.w ?? 0.8);
     if (k === 'jitter' || (D.tags && D.tags.includes('glitch'))) w *= 0.4 + fx.motion;
     if (k === 'glitchtick') w *= fx.glitch;
-    return [k, w * novelty(history, 'hold', k)];
+    return [k, w * novelty(history, 'hold', k) * fsrSemanticWeight(semantic, 'hold', k)];
   });
   return cands.length ? rng.wpick(cands) : 'still';
 }
 function decorParams(rng, k) {
   return { id: k, seed: rng.int(1, 1e9), n: rng.int(1, 3) + (k === 'shapes' ? 3 : 0) + (k === 'sparks' ? 4 : 0), right: rng.chance(0.5), low: rng.chance(0.5), accent: rng.chance(0.4), corner: rng.chance(0.5), big: rng.chance(0.4), mode: rng.pick(['count', 'index']), from: rng.int(0, 20), to: rng.int(30, 999), v: rng.int(0, 5), r: rng() };
 }
-function pickDecor(rng, st, en, fx, layout, history = []) {
+function pickDecor(rng, st, en, fx, layout, history = [], semantic) {
   const count = Math.round(fx.decor * 2.8 * rng.range(0.45, 1.15));
   const recent = new Set(history.slice(-2).flatMap(h => h.decor || []));
   const LD = J.LAYOUTS[layout] || {};
   const cands = J.DECOR_ORDER.filter(k => en.decor[k] && J.DECOR[k] && !(LD.busy && J.DECOR[k].layer === 'back' && !J.DECOR[k].subtle))
-    .map(k => [k, wkey(st.decor, k, J.DECOR[k].w != null ? J.DECOR[k].w * 0.5 : 0.35) * (recent.has(k) ? 0.35 : 1)]);
+    .map(k => [k, wkey(st.decor, k, J.DECOR[k].w != null ? J.DECOR[k].w * 0.5 : 0.35) * (recent.has(k) ? (st.recentDecorWeight ?? 0.35) : 1) * fsrSemanticWeight(semantic, 'decor', k)]);
   const out = [];
   for (let i = 0; i < count && cands.length; i++) {
     const k = rng.wpick(cands);
@@ -4205,24 +4240,25 @@ function pickDecor(rng, st, en, fx, layout, history = []) {
   return out;
 }
 // text treatment: plain most of the time; the "decor" slider raises how often a treatment is used
-function pickTreat(rng, st, en, fx, LD, emph, history) {
+function pickTreat(rng, st, en, fx, LD, emph, history, semantic) {
   if (LD.treat === false) return 'none';
   if (!rng.chance(0.18 + 0.42 * (fx.decor ?? 0.5) + (emph ? 0.15 : 0))) return 'none';
   const cands = J.TREAT_ORDER.filter(k => k !== 'none' && en.treat && en.treat[k] !== false && J.TREAT[k] && (LD.treat !== 'safe' || J.TREAT[k].safe))
-    .map(k => [k, wkey(st.bias && st.bias.treat, k, J.TREAT[k].w ?? 1) * novelty(history, 'treat', k)]);
+    .map(k => [k, wkey(st.bias && st.bias.treat, k, J.TREAT[k].w ?? 1) * novelty(history, 'treat', k) * fsrSemanticWeight(semantic, 'treat', k)]);
   return cands.length ? rng.wpick(cands) : 'none';
 }
 function pickBg(rng, st, en, fx, bgHist) {
+  if (st.background && en.bg[st.background]) return st.background;
   if (!rng.chance(0.2 + 0.35 * (fx.decor ?? 0.5) + 0.2 * (fx.bgSwitch ?? 0.35))) return 'none';
   const last = bgHist.slice(-3);
   const cands = J.BG_ORDER.filter(k => k !== 'none' && en.bg && en.bg[k] !== false && J.BG[k])
     .map(k => [k, wkey(st.bias && st.bias.bg, k, J.BG[k].w ?? 1) * (last.includes(k) ? 0.25 : 1)]);
   return cands.length ? rng.wpick(cands) : 'none';
 }
-function pickCam(rng, st, en, fx, LD, emph, history) {
+function pickCam(rng, st, en, fx, LD, emph, history, semantic) {
   const cands = J.CAMERA_ORDER.filter(k => en.cam && en.cam[k] !== false && J.CAMERA[k]).map(k => {
     const D = J.CAMERA[k];
-    let w = wkey(st.bias && st.bias.cam, k, D.w ?? 1) * novelty(history, 'cam', k);
+    let w = wkey(st.bias && st.bias.cam, k, D.w ?? 1) * novelty(history, 'cam', k) * fsrSemanticWeight(semantic, 'cam', k);
     if (D.strong) w *= 0.25 + 0.9 * (fx.motion ?? 0.7) + (emph ? 0.6 : 0);
     if (LD.cam === false && k !== 'push') w *= 0.05;
     return [k, w];
@@ -4246,6 +4282,63 @@ function pickFx(rng, st, en, fx, emph, fxHist, kind) {
     .map(k => { const D = J.FXE[k]; let w = wkey(st.bias && st.bias.fx, k, D.w ?? 1) * (last.includes(k) ? 0.2 : 1); if (D.glitchy) w *= 0.3 + g * 1.4; return [k, w]; });
   return cands.length ? rng.wpick(cands) : null;
 }
+
+/* Per-cut Future Sky Road rerolls use the SAME pickers as the full planner.
+   The UI stores the result as cutTech overrides; other styles keep their old path. */
+J.rerollFutureSkyCut = (project, cut, groups, fixed = [], history = [], rng) => {
+  if (project.style !== 'futureSkyRoad') return null;
+  rng = rng || J.rng((Math.random() * 1e9) | 0);
+  const st = J.resolveStyle(project), semantic = fsrSemantic(st, cut.text);
+  const fx = Object.assign({}, J.defaultProject().fx, project.fx || {});
+  for (const [k, max] of Object.entries(st.fxMax || {})) fx[k] = Math.min(fx[k], max);
+  Object.assign(fx, st.fxFixed || {});
+  const en = {};
+  for (const g of J.GROUP_KEYS) {
+    en[g] = {};
+    for (const key of J.order(g)) en[g][key] = !J.registry(g)[key].special &&
+      ((project.enabled || {})[g] || {})[key] !== false && J.randomOk(project, g, key);
+  }
+  const n = [...String(cut.text || '').replace(/\s+/g, '')].length;
+  const dur = cut.dur || cut.end - cut.start;
+  const [W, H] = J.designSize(project.aspect || '16:9');
+  const portrait = cut.zone ? cut.zone.h > cut.zone.w : H > W;
+  const current = g => g === 'decor' ? ((cut.decor || []).map(d => d.id).join('|') || 'none') : cut[g] || 'none';
+  const active = groups.filter(g => !fixed.includes(g));
+  const hist = history.map(c => Object.assign({}, c, { decor: (c.decor || []).map(d => typeof d === 'string' ? d : d.id) }));
+  function draw(enabled, requested = active) {
+    const out = {}, has = g => Object.values(enabled[g] || {}).some(Boolean);
+    const use = g => requested.includes(g) && has(g);
+    if (use('layout')) {
+      const fits = J.LAYOUT_ORDER.some(k => enabled.layout[k] && J.LAYOUTS[k].fits(n));
+      if (fits) out.layout = pickLayout(rng, st, enabled, n, dur, hist, cut.emph, cut.recap, portrait, semantic);
+    }
+    const layout = out.layout || cut.layout, LD = J.LAYOUTS[layout];
+    if (use('enter')) out.enter = pickEnter(rng, st, enabled, layout, dur, hist, cut.emph, n, semantic);
+    if (use('exit')) out.exit = pickExit(rng, st, enabled, layout, dur, true, hist, semantic);
+    if (use('hold')) out.hold = pickHold(rng, enabled, fx, hist, semantic);
+    if (use('decor')) out.decor = pickDecor(rng, st, enabled, fx, layout, hist, semantic)[0]?.id || 'none';
+    if (use('treat')) out.treat = project.typeset && (out.decor || current('decor')) !== 'none'
+      ? 'none' : pickTreat(rng, st, enabled, fx, LD, cut.emph, hist, semantic);
+    if (use('bg')) out.bg = pickBg(rng, st, enabled, fx, []);
+    if (use('cam')) out.cam = pickCam(rng, st, enabled, fx, LD, cut.emph, hist, semantic);
+    if (requested.includes('trans')) out.trans = 'none'; // style has no automatic transitions
+    return out;
+  }
+  const changed = out => Object.keys(out).some(g => out[g] !== current(g));
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const out = draw(en);
+    if (changed(out)) return out;
+  }
+  // A constrained pool may keep giving the same recipe. Exclude one current
+  // component and resample through its normal weighted picker. Never force an ID.
+  for (const g of active) {
+    if (!en[g] || current(g) === 'none') continue;
+    const alternatives = Object.assign({}, en, { [g]: Object.assign({}, en[g], { [current(g)]: false }) });
+    const out = draw(alternatives, [g]);
+    if (changed(out)) return out;
+  }
+  return {}; // all choices pinned/disabled, or no different eligible combination
+};
 
 /* one-cut (or two-cut, for transitions) plan used by the 手法 tab thumbnails */
 J.previewPlan = (project, group, key) => {
@@ -4413,9 +4506,10 @@ J.omakase = (project, rnd = Math.random) => {
   // technique subset per group: everything tagged with the mood (plus the mood's hand-picked core items),
   // a sprinkle of everything else, and a minimum count so the planner always has room to vary
   const enabled = {};
+  const pickProject = Object.assign({}, project, { style });
   const MIN = { layout: 6, enter: 5, exit: 5, hold: 3, decor: 6, treat: 4, bg: 4, cam: 3, fx: 4, trans: 3 };
   for (const g of J.GROUP_KEYS) {
-    const order = J.order(g).filter(k => !(J.registry(g)[k] || {}).special && (!J.randomOk || J.randomOk(project, g, k)) && moodSetOk(J.registry(g)[k]));
+    const order = J.order(g).filter(k => !(J.registry(g)[k] || {}).special && (!J.randomOk || J.randomOk(pickProject, g, k)) && moodSetOk(J.registry(g)[k]));
     const hand = ['layout', 'enter', 'exit'].includes(g) && Array.isArray(M[g]) ? M[g] : [];   // (M.fx holds slider ranges, not a list)
     const prefer = mood === 'chaos' ? null : new Set([...hand, ...J.taggedWith(g, mood)]);
     const on = {};
@@ -4445,6 +4539,12 @@ J.omakase = (project, rnd = Math.random) => {
     const bg = J.STYLES[style].schemes[0].bg;
     Object.assign(colors, J.randomPalette(bg, rnd), { accentOn: true });
     delete colors.mode;
+  }
+  // Curated styles retain their type/palette when Randomize chooses them.
+  // Explicit font/colour edits outside Randomize remain available.
+  if (J.STYLES[style].parts) {
+    for (const k of Object.keys(fonts)) delete fonts[k];
+    colors.enabled = false; colors.accentOn = false;
   }
   // keep locked lines, drop other per-line picks
   const overrides = {};
@@ -16187,6 +16287,281 @@ H.pluckString = {
 };
 
 for (const k of Object.keys(H)) J.register('hold', k, H[k], P);
+})();
+
+/* Future Sky Road — quiet typography, a pale horizon and two paths forward.
+   All drawing uses the normal JIZURA layout/background pipeline. */
+(() => {
+'use strict';
+const key = 'futureSkyRoad';
+const scheme = (bg, fg, sub, accent, accent2) => ({ bg, fg, sub, accent, accent2,
+  ink: fg, dim: J.mix(bg, sub, 0.12), ghostA: J.mix(bg, accent, 0.3), ghostB: J.mix(bg, accent2, 0.24) });
+J.STYLES[key] = {
+  name: 'Future Sky Road', desc: '淡い空とふたりの道。余白、静かな風、ほろ苦い希望。穏やかな演出に絞ったスタイル。',
+  moods: ['calm', 'emotional'],
+  schemes: [
+    scheme('#EDF2F1', '#40585F', '#82999E', '#83B6BD', '#B7BECF'),
+    scheme('#E4ECEF', '#40535F', '#879AA6', '#91B8C6', '#B4C8C4'),
+    scheme('#F5F2ED', '#52616A', '#9BA5AA', '#A1BFBD', '#D7BDC6'),
+  ],
+  fonts: { display: ['gothic_med'], serif: ['gothic_med'], body: ['gothic_light'], mono: ['mono'] },
+  texture: { grain: 0.18, paper: 0, scan: 0 }, ghost: 0.12, glow: 0, hud: false,
+  bias: { layout: { fsrPoem: 1 }, enter: { fadeStagger: 2, blur: 1 },
+    exit: { blur: 2, dissolve: 0.7 }, cam: { push: 1, driftDiag: 1 }, treat: { softShadow: 1 } },
+  decor: {},
+  // Opt-in profile: other styles retain their original pools and effect values.
+  // Per-cut manual choices still work; explicitly disabled techniques stay off.
+  parts: { layout: ['fsrPoem'], enter: ['cut', 'blur', 'fadeStagger'],
+    hold: ['still', 'drift', 'breathe'], exit: ['cut', 'blur', 'dissolve'],
+    decor: [], treat: ['none', 'softShadow'], bg: ['none', 'fsrSkyRoad'],
+    cam: ['push', 'driftDiag'], fx: [], trans: [] },
+  background: 'fsrSkyRoad',
+  fxMax: { motion: 0.38, glitch: 0, chroma: 0.12, decor: 0.25, density: 0.2, texture: 0.3, bgSwitch: 0.12 },
+  fxFixed: { flash: false, hud: 'off', koma: 0, onTwos: false },
+};
+J.STYLE_ORDER.push(key);
+
+J.register('layout', 'fsrPoem', {
+  name: '空の余白', tags: ['calm', 'emotional'], styleOnly: key, ae: 'center', w: 1,
+  fits: n => n > 0, treat: 'safe',
+  plan: (rng, cut, st) => ({ font: rng.pick(st.fonts.display), x: rng.pick([0.44, 0.5, 0.56]),
+    y: rng.pick([0.43, 0.48, 0.54]), track: rng.range(0.09, 0.14) }),
+  render(env) {
+    const { W, H, cut, sc } = env, P = cut.params;
+    const text = J.splitLines(cut.text, W < H ? 9 : 18);
+    const font = cut.emph ? 'gothic_bold' : P.font;
+    const size = Math.min(Math.min(W, H) * 0.085,
+      J.fitSize(text, font, W * 0.7, H * 0.32, { track: P.track, lead: 1.6 }));
+    return J.mainDraw(env, { text, font, size, x: W * P.x, y: H * P.y,
+      color: sc.fg, track: P.track, lead: 1.6 });
+  },
+}, key);
+
+J.register('bg', 'fsrSkyRoad', {
+  name: '未来の空と道', tags: ['calm', 'emotional'], styleOnly: key, ae: 'gradientSweep', subtle: true, w: 1,
+  plan: rng => ({ seed: rng.int(1, 999999999), horizon: rng.range(0.69, 0.75), vanish: rng.range(0.46, 0.54) }),
+  draw(env, P) {
+    const { ctx, W, H, sc } = env, U = Math.min(W, H), t = env.t || 0;
+    const motion = env.fx.motion || 0, vx = W * (P.vanish || 0.5), hy = H * (P.horizon || 0.72);
+    ctx.save();
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, J.mix(sc.bg, sc.accent, 0.32));
+    sky.addColorStop(0.7, sc.bg);
+    sky.addColorStop(1, J.mix(sc.bg, sc.accent2, 0.15));
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    // Broad mist, deliberately away from the text; no sharp cloud silhouettes.
+    for (let i = 0; i < 3; i++) {
+      const x = W * (0.18 + i * 0.32 + Math.sin(t * 0.055 + i) * 0.025 * motion);
+      const y = H * (0.2 + i * 0.09), r = W * 0.38;
+      ctx.save(); ctx.translate(x, y); ctx.scale(1, 0.15);
+      const mist = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      mist.addColorStop(0, J.rgba(sc.bg, 0.65)); mist.addColorStop(1, J.rgba(sc.bg, 0));
+      ctx.fillStyle = mist; ctx.fillRect(-r, -r, r * 2, r * 2); ctx.restore();
+    }
+    const glow = ctx.createLinearGradient(0, hy - H * 0.14, 0, hy + H * 0.14);
+    glow.addColorStop(0, J.rgba(sc.accent2, 0)); glow.addColorStop(0.5, J.rgba(sc.accent2, 0.12)); glow.addColorStop(1, J.rgba(sc.accent2, 0));
+    ctx.fillStyle = glow; ctx.fillRect(0, hy - H * 0.14, W, H * 0.28);
+    // Two neighbouring paths: four very faint lines, not a wireframe grid.
+    ctx.lineWidth = Math.max(0.7, U * 0.001); ctx.strokeStyle = J.rgba(sc.sub, 0.2);
+    for (const side of [-1, 1]) for (const offset of [0, 0.016]) {
+      ctx.beginPath(); ctx.moveTo(vx + side * W * 0.012, hy);
+      ctx.lineTo(vx + side * W * (0.3 + offset), H * 1.03); ctx.stroke();
+    }
+    // Quiet lateral wind trails; sparse and always below the lyric zone.
+    for (let i = 0; i < 5; i++) {
+      const x = ((J.r(P.seed, i, 1) + t * 0.006 * motion) % 1) * W;
+      const y = H * (0.79 + J.r(P.seed, i, 2) * 0.16);
+      ctx.strokeStyle = J.rgba(sc.sub, 0.08); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + W * 0.045, y); ctx.stroke();
+    }
+    ctx.restore();
+  },
+}, key);
+})();
+
+/* Future Sky Road, Phase 2. Curated visual vocabulary; no lyric keyword detection.
+   The Phase 1 parts remain registered for saved manual picks. */
+(() => {
+'use strict';
+const K = 'futureSkyRoad', st = J.STYLES[K];
+const reg = (g, k, d) => J.register(g, k, Object.assign({ tags: ['calm', 'emotional'], styleOnly: K, w: 1 }, d), K);
+const layouts = ['fsrOpenSky', 'fsrParallelJourney', 'fsrTwinBalance', 'fsrLowGround', 'fsrDriftingMemory'];
+const decors = ['fsrRoadLines', 'fsrHorizonGlow', 'fsrCloudHaze', 'fsrWindTrails', 'fsrTwinShadows', 'fsrDiffuseBleed'];
+st.parts.layout = layouts;
+st.parts.bg = ['none', 'fsrSkyWash']; st.background = 'fsrSkyWash';
+st.parts.decor = decors;
+st.parts.enter = ['fsrSoftIn', 'fadeStagger']; st.parts.exit = ['fsrSoftOut', 'blur', 'dissolve'];
+st.parts.hold = ['still', 'fsrTravel', 'fsrRise', 'breathe'];
+st.parts.cam = ['fsrHorizon', 'push', 'driftDiag'];
+st.bias.layout = Object.fromEntries(layouts.map(k => [k, 1]));
+st.bias.enter = { fsrSoftIn: 3, fadeStagger: 1 }; st.bias.exit = { fsrSoftOut: 3, blur: 1, dissolve: 0.5 };
+st.bias.cam = { fsrHorizon: 2, push: 1, driftDiag: 0.7 };
+st.decor = { fsrCloudHaze: 1.3, fsrWindTrails: 1, fsrHorizonGlow: 1, fsrRoadLines: 0.35, fsrTwinShadows: 0.7, fsrDiffuseBleed: 0.7 };
+
+// Split by a user-authored space, otherwise balance existing text line breaking.
+// This is typesetting, not semantic matching; nothing examines lyric keywords.
+const split = text => {
+  const words = text.trim().split(/\s+/);
+  if (words.length > 1) {
+    let best = 1, distance = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const d = Math.abs(J.glyphCount(words.slice(0,i).join(' ')) - J.glyphCount(words.slice(i).join(' ')));
+      if (d < distance) { best = i; distance = d; }
+    }
+    return [words.slice(0,best).join(' '), words.slice(best).join(' ')];
+  }
+  const n = J.glyphCount(text);
+  if (n < 2) return [text];
+  const lines = J.splitLines(text, Math.ceil(n / 2)).split('\n');
+  if (lines.length <= 2) return lines;
+  const mid = Math.ceil(lines.length / 2);
+  return [lines.slice(0,mid).join(''), lines.slice(mid).join('')];
+};
+function recipe(kind, rng, cut, style) {
+  const right = rng.chance(0.5), port = cut.H > cut.W;
+  const font = rng.pick(style.fonts.display), track = rng.range(0.09, 0.13);
+  const item = (text, x, y, w, h, size, align = 'left', mi = 0, rot = 0) => ({ text, x, y, w, h, size, align, mi, rot, track });
+  let items;
+  if (kind === 'fsrOpenSky') {
+    items = [item(J.splitLines(cut.text, port ? 8 : 18), right ? 0.86 : 0.14, right ? 0.72 : 0.64, 0.7, 0.25, 0.071, right ? 'right' : 'left')];
+  } else if (kind === 'fsrLowGround') {
+    items = [item(J.splitLines(cut.text, port ? 8 : 12), right ? 0.84 : 0.16, 0.78, 0.68, 0.25, 0.066, right ? 'right' : 'left')];
+    items[0].track = 0.065;
+  } else if (kind === 'fsrDriftingMemory') {
+    items = [item(J.splitLines(cut.text, port ? 8 : 17), right ? 0.84 : 0.16, right ? 0.37 : 0.43, 0.66, 0.3, 0.073, right ? 'right' : 'left')];
+    items[0].track = 0.15; items[0].memory = true;
+  } else {
+    const parts = split(cut.text);
+    items = parts.map((t, i) => kind === 'fsrParallelJourney'
+      ? item(J.splitLines(t, port ? 7 : 13), i ? 0.27 : 0.17, i ? 0.62 : 0.4, 0.58, 0.17, 0.069, 'left', i * 4, -1.2)
+      : item(J.splitLines(t, port ? 6 : 11), i ? 0.59 : 0.37, i ? 0.59 : 0.42, port ? 0.61 : 0.47, 0.18, 0.068, 'center', i * 4, i ? -1.0 : 1.3));
+  }
+  return { font, right, items };
+}
+const names = ['ひらけた空', '並んで進む道', '支え合う文字', '低い地平', '漂う記憶'];
+layouts.forEach((kind, i) => reg('layout', kind, {
+  name: names[i], ae: 'center', fits: n => n > 0, treat: 'safe',
+  plan: (rng, cut, style) => recipe(kind, rng, cut, style),
+  render(env) {
+    const { W, H, cut, sc } = env, P = cut.params, U = Math.min(W, H);
+    let bb = null;
+    if (kind === 'fsrParallelJourney') {
+      const a = J.E.inOutSine(J.clamp(env.lt / 0.8)) * (1 - J.E.inOutSine(env.pOut));
+      [[0.13, 0.47, 0.76], [0.23, 0.69, 0.86]].forEach(([x, y, x2]) => env.line([[W*x,H*y],[W*x2,H*y-H*0.015]], sc.sub, U*0.0008, 0.19*a, false));
+    }
+    for (const p of P.items || []) {
+      const font = cut.emph ? 'gothic_bold' : P.font;
+      const size = Math.min(U*p.size, J.fitSize(p.text, font, W*p.w, H*p.h, {track:p.track,lead:1.65}));
+      const it = { text:p.text, font, size, x:W*p.x, y:H*p.y, track:p.track, lead:1.65,
+        align:p.align, mi:p.mi, rot:p.rot, color:sc.fg };
+      if (p.memory && env.pass === 'main') J.mainDraw(env, Object.assign({}, it, {
+        x:it.x-W*0.014, y:it.y+H*0.026, alpha:0.065, blur:U*0.003, color:sc.sub, plain:true, ghost:false }));
+      bb = J.unionBB(bb, J.mainDraw(env, it));
+    }
+    return bb;
+  },
+}));
+
+reg('bg', 'fsrSkyWash', {
+  name:'淡い空', subtle:true, ae:'gradientSweep',
+  draw({ctx,W,H,sc}) {
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,J.mix(sc.bg,sc.accent,0.32));g.addColorStop(0.7,sc.bg);g.addColorStop(1,J.mix(sc.bg,sc.accent2,0.15));
+    ctx.save();ctx.fillStyle=g;ctx.fillRect(0,0,W,H);ctx.restore();
+  },
+});
+// Bounded radial washes, no image assets or per-frame canvas allocation.
+function haze(env,x,y,rx,ry,color,alpha,rot=0) {
+  const c=env.ctx;c.save();c.translate(x,y);c.rotate(rot);c.scale(rx,ry);
+  const g=c.createRadialGradient(0,0,0,0,0,1);g.addColorStop(0,J.rgba(color,alpha));g.addColorStop(0.48,J.rgba(color,alpha*0.48));g.addColorStop(1,J.rgba(color,0));
+  c.fillStyle=g;c.fillRect(-1,-1,2,2);c.restore();
+}
+const decorNames=['道の線','地平の光','薄い雲','風の軌跡','ふたりの影','淡い滲み'];
+decors.forEach((kind,i)=>reg('decor',kind,{
+  name:decorNames[i],layer:'back',subtle:true,ae:'blobs',
+  draw(env,bb,P) {
+    if(env.pass!=='main')return;
+    const {ctx:c,W,H,sc}=env,U=Math.min(W,H),m=env.fx.motion||0;
+    const a=J.E.inOutSine(J.clamp(env.lt/0.85))*(1-J.E.inOutSine(env.pOut));
+    const t=env.ltb||env.lt, flow=Math.sin(t*0.24)*W*0.018*m;
+    c.save();c.globalAlpha*=a;
+    if(kind==='fsrRoadLines') {
+      const vx=W*0.56,hy=H*0.72;
+      c.strokeStyle=J.rgba(sc.sub,0.3);c.lineWidth=U*0.0012;
+      for(const side of [-1,1])for(const off of [0,0.019]){c.beginPath();c.moveTo(vx+side*W*0.008,hy);c.lineTo(vx+side*W*(0.29+off),H*1.04);c.stroke();}
+    } else if(kind==='fsrHorizonGlow') {
+      haze(env,W*0.55,H*0.77,W*0.7,H*0.09,sc.accent2,0.27);
+      haze(env,W*0.55,H*0.75,W*0.56,H*0.033,J.mix(sc.bg,'#FFFFFF',0.6),0.55);
+    } else if(kind==='fsrCloudHaze') {
+      for(let j=0;j<3;j++){
+        const x=W*([0.16,0.49,0.81][j])+flow,y=H*([0.21,0.28,0.18][j]);
+        haze(env,x,y+H*0.04,W*0.18,H*0.046,sc.sub,0.055);
+        haze(env,x,y,W*(0.18+j%2*0.02),H*(0.07+j%2*0.015),J.mix(sc.bg,'#FFFFFF',0.72),0.72);
+      }
+    } else if(kind==='fsrWindTrails') {
+      c.strokeStyle=J.rgba(sc.sub,0.2);c.lineWidth=U*0.0008;
+      for(let j=0;j<4;j++){
+        const x=W*(0.05+j*0.18)+flow,y=H*([0.29,0.32,0.82,0.85][j]);
+        c.beginPath();c.moveTo(x,y);c.bezierCurveTo(x+W*0.08,y-H*0.018,x+W*0.19,y+H*0.014,x+W*0.29,y-H*0.006);c.stroke();
+      }
+    } else if(kind==='fsrTwinShadows') {
+      const d=Math.sin(t*0.4)*W*0.008*m;
+      haze(env,W*0.46+d,H*0.54,W*0.033,H*0.17,sc.sub,0.23,-0.36);
+      haze(env,W*0.54+d,H*0.6,W*0.033,H*0.16,sc.accent,0.26,0.28);
+    } else if(kind==='fsrDiffuseBleed') {
+      const grow=1+J.E.inOutSine(J.clamp(t/Math.max(0.1,env.cut.dur)))*0.15*m;
+      for(let j=0;j<4;j++)haze(env,W*(0.38+j*0.09),H*(0.57+j%2*0.09),W*0.13*grow,H*0.09*grow,j%2?sc.accent2:sc.accent,0.105);
+    }
+    c.restore();
+  },
+}));
+reg('enter','fsrSoftIn',{
+  name:'そっと現れる',ae:'blur',inDur:dur=>Math.min(0.85,dur*0.36),
+  apply(env,it,p){const e=J.E.inOutSine(p);it.alpha=(it.alpha??1)*e;it.y+=(1-e)*env.H*0.014;it.blur=(it.blur||0)+(1-e)*5;},
+});
+reg('exit','fsrSoftOut',{
+  name:'静かにほどける',ae:'blur',outDur:dur=>Math.min(0.7,dur*0.3),
+  apply(env,it,p){const e=J.E.inOutSine(p);it.alpha=(it.alpha??1)*(1-e);it.blur=(it.blur||0)+e*7;},
+});
+reg('hold','fsrTravel',{
+  name:'静かな横移動',ae:'drift',
+  apply(env,it,amt){it.x+=env.W*0.018*env.fx.motion*J.clamp(env.lt/env.cut.dur)*amt;},
+});
+reg('hold','fsrRise',{
+  name:'ゆっくり見上げる',ae:'drift',
+  apply(env,it,amt){it.y-=env.H*0.022*env.fx.motion*J.clamp(env.lt/env.cut.dur)*amt;},
+});
+reg('cam','fsrHorizon',{
+  name:'地平へ寄る',ae:'push',
+  get(env){const u=J.E.inOutSine(J.clamp(env.lt/env.cut.dur)),m=env.fx.motion||0;return{s:1+0.035*m*u,y:-env.H*0.007*m*u};},
+});
+})();
+
+/* Future Sky Road Phase 3: local, probabilistic lyric tags. */
+(() => {
+'use strict';
+const st = J.STYLES.futureSkyRoad;
+// Multipliers, not forced selections. Aliases cover Japanese, English, simplified /
+// traditional Chinese and Korean; this deliberately is not a language model.
+st.lyricRules = [
+ {tag:'sky', words:['空','sky','cloud','clouds','future','未来','未來','光','blue','tomorrow','明天','天空','云','雲','하늘','미래','빛','내일','구름'], weights:{layout:{fsrOpenSky:3},decor:{fsrCloudHaze:2.8,fsrHorizonGlow:2.5},hold:{fsrRise:2.6},cam:{fsrHorizon:2.3,push:1.4}}},
+ {tag:'journey', words:['道','一本道','走','進','进','road','roads','run','running','journey','move','moving','forward','길','달리','달려','앞으로'], weights:{layout:{fsrParallelJourney:3},decor:{fsrRoadLines:3.2,fsrWindTrails:2.5},hold:{fsrTravel:2.8},cam:{fsrHorizon:2.3,push:1.4}}},
+ {tag:'together', words:['肩','並べ','支え','一緒','together','shoulder','side by side','support','一起','并肩','並肩','扶持','함께','나란히','어깨','기대'], weights:{layout:{fsrTwinBalance:3},decor:{fsrTwinShadows:3},hold:{fsrTwinSway:2.6},enter:{fadeStagger:1.6}}},
+ {tag:'shadow', words:['影','ふらつく','shadow','shadows','sway','unstable','摇晃','搖晃','그림자','흔들'], weights:{layout:{fsrDriftingMemory:2.4},decor:{fsrTwinShadows:2.8},hold:{fsrTwinSway:2.8}}},
+ {tag:'blur', words:['滲','涙','泣','memory','memories','blur','tears','泪','淚','模糊','回忆','回憶','눈물','흐릿','기억'], weights:{layout:{fsrDriftingMemory:2.6},decor:{fsrDiffuseBleed:3,fsrCloudHaze:1.8},enter:{fsrSoftIn:1.5},exit:{blur:2.2,dissolve:2,fsrSoftOut:1.3}}},
+ {tag:'voice', words:['声','聲','叫','歌','voice','sing','singing','shout','목소리','노래','외치'], weights:{layout:{fsrDriftingMemory:1.5,fsrOpenSky:1.8},decor:{fsrWindTrails:3},hold:{fsrRise:2.6},enter:{fadeStagger:1.4}}},
+ {tag:'ground', words:['跪','生きる','疲','ground','survive','survival','live','alive','活着','活著','지친','살아','무릎'], weights:{layout:{fsrLowGround:3.2},decor:{fsrHorizonGlow:2.5},hold:{still:3,breathe:1.5},cam:{fsrHorizon:1.5}}},
+ {tag:'wear', words:['pride','錆','過去','old','rust','rusty','memory','memories','过去','锈','鏽','옛','녹슨','과거','기억'], weights:{layout:{fsrDriftingMemory:3},decor:{fsrDiffuseBleed:2},hold:{still:1.8},treat:{softShadow:1.8},exit:{fsrSoftOut:1.5}}},
+];
+st.recentDecorWeight = 0.15;
+st.parts.hold.push('fsrTwinSway');
+J.register('hold','fsrTwinSway',{
+ name:'ふたりの揺らぎ',tags:['calm','emotional'],styleOnly:'futureSkyRoad',w:0.65,ae:'drift',
+ apply(env,it,amt){
+  const phase=(it.mi||0)*0.18,t=env.lt*0.65,m=env.fx.motion*amt;
+  it.x+=env.W*0.005*m*Math.sin(t+phase);
+  it.y+=env.H*0.003*m*Math.sin(t*0.8+phase);
+ },
+},'futureSkyRoad');
 })();
 
 /* JIZURA pack: fxB — more post-processing / accent effects: lens, print, film, glitch and manga-style overlays */
@@ -35616,7 +35991,10 @@ J.setOf = (g, k) => { const d = def(g, k); return (d && d.set) || null; };
 /* may random picks use this entry? (g: a group key, 'style' or 'font') — 追加分 first, then 和風 */
 J.randomOk = (project, g, k) => {
   const d = def(g, k); if (!d) return false;
-  if (d.extra && !(project && project.extra === true)) return false;
+  if (d.styleOnly && (!project || project.style !== d.styleOnly)) return false;
+  const st = project && J.STYLES[project.style], parts = st && st.parts && st.parts[g];
+  if (parts && !parts.includes(k)) return false;
+  if (!parts && d.extra && !(project && project.extra === true)) return false;
   if (d.wa && project && project.wa === false) return false;
   if (d.set && !J.setOn(project, d.set)) return false;
   return true;
@@ -35629,6 +36007,8 @@ J.randomOk = (project, g, k) => {
   'use strict';
   const titles = {
     layout: {
+      fsrPoem: 'Poem in the sky', fsrOpenSky: 'Open Sky', fsrParallelJourney: 'Parallel Journey',
+      fsrTwinBalance: 'Twin Balance', fsrLowGround: 'Low Ground', fsrDriftingMemory: 'Drifting Memory',
       vcols: 'Vertical text', marquee: 'Scrolling banner', tile: 'Tiled text',
       huge: 'Oversized text', gloss: 'Annotation', diag: 'Diagonal band',
       stack: 'Echo stack', lowerThird: 'Lower third', corners: 'Opposite corners',
@@ -35657,6 +36037,7 @@ J.randomOk = (project, g, k) => {
       halftoneBig: 'Oversized halftone text'
     },
     enter: {
+      fsrSoftIn: 'Soft Arrival',
       assemble: 'Break apart and assemble', riseMask: 'Reveal from below',
       dropMask: 'Reveal from above', slideL: 'Slide from left', slideR: 'Slide from right',
       slideWhole: 'Slide in together', flipX: 'Flip on vertical axis',
@@ -35680,6 +36061,7 @@ J.randomOk = (project, g, k) => {
       shadowFirst: 'Shadow first', tokoroten: 'Extruded noodles'
     },
     hold: {
+      fsrTwinSway: 'Twin Sway', fsrTravel: 'Gentle Horizontal Drift', fsrRise: 'Slow Upward Rise',
       still: 'Still', breathe: 'Breathe', glitchtick: 'Glitch tick',
       colorRun: 'Traveling color', trackBreathe: 'Breathing letter spacing',
       beatHop: 'Hop to the beat', hWave: 'Horizontal wave',
@@ -35694,6 +36076,7 @@ J.randomOk = (project, g, k) => {
       pluckString: 'Plucked string'
     },
     exit: {
+      fsrSoftOut: 'Soft Dissolve',
       fall: 'Crumble and fall', drift: 'Drift away', sinkMask: 'Sink out',
       riseOut: 'Rise out', slideOutL: 'Slide left', slideOutR: 'Slide right',
       flipOutX: 'Doors close', flipOutY: 'Flip down',
@@ -35722,6 +36105,8 @@ J.randomOk = (project, g, k) => {
       scribbleOut: 'Scribble away', candleOut: 'Blow out'
     },
     decor: {
+      fsrRoadLines: 'Road Lines', fsrHorizonGlow: 'Horizon Glow', fsrCloudHaze: 'Soft Cloud Haze',
+      fsrWindTrails: 'Wind Trails', fsrTwinShadows: 'Twin Shadows', fsrDiffuseBleed: 'Diffuse Bleed',
       brackets: 'Corner marks', rings: 'Coordinate rings', dots: 'Dotted ring',
       leaders: 'Leader lines', blobs: 'Ink stains', bars: 'Rough bands',
       counter: 'Large numbers', cropMarks: 'Crop marks',
@@ -35766,6 +36151,7 @@ J.randomOk = (project, g, k) => {
       spotChar: 'Highlighted character', ransom: 'Cutout letters'
     },
     bg: {
+      fsrSkyRoad: 'Future sky and road', fsrSkyWash: 'Pale Sky',
       none: 'Solid color', seigaiha: 'Seigaiha waves',
       asanoha: 'Asanoha pattern', topoLines: 'Contour lines',
       ridgePlot: 'Mountain ridges', nightMoon: 'Moonlit night',
@@ -35779,6 +36165,7 @@ J.randomOk = (project, g, k) => {
       letterbox: 'Cinema letterbox', noiseField: 'Moving noise'
     },
     cam: {
+      fsrHorizon: 'Horizon Push',
       push: 'Slow push in', rackFocus: 'Rack focus',
       floatNoise: 'Floating camera', vertigo: 'Dolly zoom',
       spiralIn: 'Spiral zoom', jelly: 'Elastic wobble',
@@ -35824,6 +36211,7 @@ J.randomOk = (project, g, k) => {
     }
   }
   const styles = {
+    futureSkyRoad: ['Future Sky Road', 'Pale skies, paired roads and quiet hope. Curated gentle motion with restrained effects.'],
     noir: ['Noir Chroma', 'Black and white with cyan and amber color offsets'],
     crimson: ['Crimson Signal', 'Deep red, monochrome type and damaged data'],
     caution: ['Caution', 'Yellow, red and blue with instrument graphics'],
@@ -35867,7 +36255,7 @@ J.randomOk = (project, g, k) => {
 })();
 
 (() => {
-  const S = {"hrRuin": ["Phế tích", "Xanh xám bạc màu, đỏ gỉ sét và chữ có chân vang vọng"], "hrNightRec": ["Băng ghi hình nửa đêm", "Màn hình đen kịt, trắng và đỏ của camera giám sát, nhiễu sóng"], "hrCurse": ["Bức thư nguyền rủa", "Giấy ố vàng, mực phai và nét chữ đỏ sẫm"], "noir": ["Noir sắc màu", "Đen trắng với bù màu xanh lơ và hổ phách"], "crimson": ["Tín hiệu đỏ thẫm", "Màu đỏ thẫm, chữ đơn sắc và dữ liệu hỏng"], "caution": ["Cảnh báo", "Vàng, đỏ, xanh và đồ họa bảng điều khiển"], "magenta": ["Pop magenta", "Hồng sáng, chữ tròn đậm và đường chỉ dẫn"], "paper": ["Giấy và mực", "Kết cấu giấy, chàm, magenta và bóng serif"], "hud": ["HUD tối", "Than, khung mỏng, điểm nhấn cam và nhật thực"], "mint": ["Terminal mint", "Đen, teal, chanh và hiệu ứng quét"], "specimen": ["Mẫu chữ", "Nền mực với chú thích serif"], "transit": ["Giao thông", "Ô liu và vàng, biển báo và halftone"], "blueprint": ["Bản vẽ", "Collage đồ họa xanh, trắng và đen"], "rouge": ["Gradient đỏ", "Gradient xám nhạt và đỏ với hình viên nang"], "mono": ["Mono RGB", "Không gian xám, serif trắng và tách RGB mạnh"], "sakura": ["Sakura", "Hồng sakura dịu và mận tím, chữ tròn và serif"], "ocean": ["Biển sâu", "Navy, cyan phát sáng, bong bóng và sans mảnh"], "sunset": ["Gradient hoàng hôn", "Gradient cam sang tím, serif đậm và ánh sáng sau"], "forest": ["Ghi chú rừng", "Xanh rêu, giấy tự nhiên và chữ bút chì"], "vapor": ["Vaporwave", "Hồng và xanh pastel với quầng VHS"], "newsprint": ["Giấy báo", "Giấy xám, đen và đỏ, halftone và lệch in"], "synth80": ["Synth thập niên 80", "Nền đen với magenta và cyan neon cùng vạch quét"], "kraft": ["Giấy kraft", "Giấy ấm, con dấu đỏ và chàm, băng dính giấy"], "candy": ["Kẹo", "Mint và pastel trái cây với chữ nảy"], "acid": ["Acid", "Đen, xanh acid và magenta với chữ thô"], "sumi": ["Mực và đỏ", "Giấy Nhật, thư pháp và con dấu đỏ"], "gold": ["Đêm vàng", "Đen sâu, foil vàng, serif ngà và lấp lánh"]};
+  const S = {"futureSkyRoad": ["Future Sky Road", "Bầu trời nhạt màu, hai lối song hành và hy vọng lặng yên. Chuyển động nhẹ với hiệu ứng tiết chế."], "hrRuin": ["Phế tích", "Xanh xám bạc màu, đỏ gỉ sét và chữ có chân vang vọng"], "hrNightRec": ["Băng ghi hình nửa đêm", "Màn hình đen kịt, trắng và đỏ của camera giám sát, nhiễu sóng"], "hrCurse": ["Bức thư nguyền rủa", "Giấy ố vàng, mực phai và nét chữ đỏ sẫm"], "noir": ["Noir sắc màu", "Đen trắng với bù màu xanh lơ và hổ phách"], "crimson": ["Tín hiệu đỏ thẫm", "Màu đỏ thẫm, chữ đơn sắc và dữ liệu hỏng"], "caution": ["Cảnh báo", "Vàng, đỏ, xanh và đồ họa bảng điều khiển"], "magenta": ["Pop magenta", "Hồng sáng, chữ tròn đậm và đường chỉ dẫn"], "paper": ["Giấy và mực", "Kết cấu giấy, chàm, magenta và bóng serif"], "hud": ["HUD tối", "Than, khung mỏng, điểm nhấn cam và nhật thực"], "mint": ["Terminal mint", "Đen, teal, chanh và hiệu ứng quét"], "specimen": ["Mẫu chữ", "Nền mực với chú thích serif"], "transit": ["Giao thông", "Ô liu và vàng, biển báo và halftone"], "blueprint": ["Bản vẽ", "Collage đồ họa xanh, trắng và đen"], "rouge": ["Gradient đỏ", "Gradient xám nhạt và đỏ với hình viên nang"], "mono": ["Mono RGB", "Không gian xám, serif trắng và tách RGB mạnh"], "sakura": ["Sakura", "Hồng sakura dịu và mận tím, chữ tròn và serif"], "ocean": ["Biển sâu", "Navy, cyan phát sáng, bong bóng và sans mảnh"], "sunset": ["Gradient hoàng hôn", "Gradient cam sang tím, serif đậm và ánh sáng sau"], "forest": ["Ghi chú rừng", "Xanh rêu, giấy tự nhiên và chữ bút chì"], "vapor": ["Vaporwave", "Hồng và xanh pastel với quầng VHS"], "newsprint": ["Giấy báo", "Giấy xám, đen và đỏ, halftone và lệch in"], "synth80": ["Synth thập niên 80", "Nền đen với magenta và cyan neon cùng vạch quét"], "kraft": ["Giấy kraft", "Giấy ấm, con dấu đỏ và chàm, băng dính giấy"], "candy": ["Kẹo", "Mint và pastel trái cây với chữ nảy"], "acid": ["Acid", "Đen, xanh acid và magenta với chữ thô"], "sumi": ["Mực và đỏ", "Giấy Nhật, thư pháp và con dấu đỏ"], "gold": ["Đêm vàng", "Đen sâu, foil vàng, serif ngà và lấp lánh"]};
   for (const [k, [n, d]] of Object.entries(S)) if (J.STYLES[k]) { J.STYLES[k].name = n; J.STYLES[k].desc = d; }
   const M = {"horror": "Kinh dị", "glitch": "Glitch", "calm": "Êm dịu", "pop": "Pop", "graphic": "Đồ họa", "editorial": "Biên tập", "emotional": "Cảm xúc", "chaos": "Hỗn loạn"};
   for (const [k, n] of Object.entries(M)) if (J.MOODS[k]) J.MOODS[k].name = n;
@@ -36368,18 +36756,32 @@ function rerollCurrentCut(kind) {
   const cut = J.cutAt(S.plan, S.t);
   const k = lyricCutK(cut);
   if (!cut || k < 0) { toast('Không có cảnh nào ở vị trí này để chọn lại'); return; }
-  remember();
   const n = [...String(cut.text || '').replace(/\s+/g, '')].length;
   const groups = kind === 'omakase'
     ? CHIP_GROUPS.map(x => x[0])
     : ['layout', 'enter', 'hold', 'exit', 'cam', 'trans'];
   const t0 = S.t;
-  groups.forEach(g => {
-    const allowNone = g === 'decor' || g === 'trans';
-    const key = pickEnabledTech(g, { avoid: kind === 'omakase' ? cutGroupVal(cut, g) : null, allowNone, n });
-    if (key) setCutTech(cut.line, k, g, key);
-  });
-  markCutQuiet(cut.line, k, groups, true);
+  if (S.project.style === 'futureSkyRoad') {
+    const slot = cutTechSlot(cut.line, k), quiet = cutQuietSlot(cut.line, k);
+    const ov = (S.project.overrides || {})[cut.line] || {};
+    // Explicit menu/line choices stay pinned. Prior automatic rerolls are marked
+    // quiet by the existing UI, so they can be randomized again.
+    const fixed = groups.filter(g => ov.lock || ov[g] != null || (slot[g] && !quiet[g]));
+    const history = S.plan.cuts.filter(c => c.index < cut.index).slice(-6);
+    const picks = J.rerollFutureSkyCut(S.project, cut, groups, fixed, history);
+    if (!Object.keys(picks).length) { toast('Không có lựa chọn tự động khác. Hãy kiểm tra lựa chọn thủ công và các thành phần đang bật.'); return; }
+    remember();
+    for (const [g, key] of Object.entries(picks)) setCutTech(cut.line, k, g, key);
+    markCutQuiet(cut.line, k, Object.keys(picks), true);
+  } else {
+    remember();
+    groups.forEach(g => {
+      const allowNone = g === 'decor' || g === 'trans';
+      const key = pickEnabledTech(g, { avoid: kind === 'omakase' ? cutGroupVal(cut, g) : null, allowNone, n });
+      if (key) setCutTech(cut.line, k, g, key);
+    });
+    markCutQuiet(cut.line, k, groups, true);
+  }
   closeCutPick();
   replan();
   commit();

@@ -45,7 +45,10 @@ function jzSetOn(o, s) { if (o && (o[s] === true || o[s] === false)) return o[s]
 function jzRandomOk(o, g, k) {
     var m = g === 'style' ? JZ_DATA.styles[k] : (g === 'font' ? JZ_DATA.fonts[k] : jzMeta(g, k));
     if (!m) return false;
-    if (m.extra && !(o && o.extra === true)) return false;
+    if (m.styleOnly && (!o || o.style !== m.styleOnly)) return false;
+    var st = o && JZ_DATA.styles[o.style], parts = st && st.parts && st.parts[g];
+    if (parts && jzIndexOf(parts, k) < 0) return false;
+    if (!parts && m.extra && !(o && o.extra === true)) return false;
     if (m.wa && o && o.wa === false) return false;
     if (m.set && !jzSetOn(o, m.set)) return false;   // part sets: ホラー (off unless switched on), 文字PV系 / キネティック (on)
     return true;

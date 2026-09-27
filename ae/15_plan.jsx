@@ -50,12 +50,12 @@ var JZ_HOLD_W = { still: 1, jitter: 1.2, drift: 1, breathe: 0.7, wave: 0.4, glit
 function jzInList(k, list) { return jzIndexOf(list, k) >= 0; }
 function jzBias(st, g) { return st.bias && st.bias[g] ? st.bias[g] : null; }
 function jzHasTag(m, t) { return m.tags ? jzIndexOf(m.tags, t) >= 0 : false; }
-function jzPickLayout(rng, st, en, n, dur, hist, emph, recap, portrait) {
+function jzPickLayout(rng, st, en, n, dur, hist, emph, recap, portrait, semantic) {
     var c = [], order = jzOrder('layout');
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('layout', k);
         if (!en.layout[k] || m.special || JZ_REG.layout[k].special || !jzFitsN(k, n)) continue;
-        var w = jzW(jzBias(st, 'layout'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'layout', k);
+        var w = jzW(jzBias(st, 'layout'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'layout', k) * fsrSemanticWeight(semantic, 'layout', k);
         if (portrait) w *= m.portrait != null ? m.portrait : jzW(JZ_PORTRAIT_W, k, 1);
         if (emph && m.emph) w *= m.emph;
         if (emph && jzInList(k, ['huge', 'center', 'tile', 'marquee', 'condensed'])) w *= 2;
@@ -66,11 +66,11 @@ function jzPickLayout(rng, st, en, n, dur, hist, emph, recap, portrait) {
     }
     return c.length ? rng.wpick(c) : 'center';
 }
-function jzPickEnter(rng, st, en, layout, dur, hist, emph, n) {
+function jzPickEnter(rng, st, en, layout, dur, hist, emph, n, semantic) {
     var c = [], order = jzOrder('enter'), LM = jzMeta('layout', layout);
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('enter', k); if (!en.enter[k]) continue;
-        var w = jzW(jzBias(st, 'enter'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'enter', k) * jzW(JZ_LAYOUT_ENTER[layout] || LM.enterBias, k, 1);
+        var w = jzW(jzBias(st, 'enter'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'enter', k) * jzW(JZ_LAYOUT_ENTER[layout] || LM.enterBias, k, 1) * fsrSemanticWeight(semantic, 'enter', k);
         if (m.minDur && dur < m.minDur) w *= 0.15;
         if (m.maxChars && n > m.maxChars) w *= 0.2;
         if (k === 'cut') w *= 0.5;
@@ -82,11 +82,11 @@ function jzPickEnter(rng, st, en, layout, dur, hist, emph, n) {
     }
     return c.length ? rng.wpick(c) : 'cut';
 }
-function jzPickExit(rng, st, en, layout, dur, last, hist) {
+function jzPickExit(rng, st, en, layout, dur, last, hist, semantic) {
     var c = [], order = jzOrder('exit');
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('exit', k); if (!en.exit[k]) continue;
-        var w = jzW(jzBias(st, 'exit'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'exit', k);
+        var w = jzW(jzBias(st, 'exit'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'exit', k) * fsrSemanticWeight(semantic, 'exit', k);
         if (m.minDur && dur < m.minDur) w *= 0.15;
         if (k === 'cut') w *= dur < 0.6 ? 4 : (last ? 1.2 : 2.2);
         if (dur < 0.6 && k !== 'cut') w *= 0.4;
@@ -95,27 +95,27 @@ function jzPickExit(rng, st, en, layout, dur, last, hist) {
     }
     return c.length ? rng.wpick(c) : 'cut';
 }
-function jzPickHold(rng, en, fx, hist) {
+function jzPickHold(rng, en, fx, hist, semantic) {
     var c = [], order = jzOrder('hold');
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('hold', k); if (!en.hold[k]) continue;
         var w = JZ_HOLD_W[k] != null ? JZ_HOLD_W[k] : (m.w != null ? m.w : 0.8);
         if (k === 'jitter' || jzHasTag(m, 'glitch')) w *= 0.4 + fx.motion;
         if (k === 'glitchtick') w *= fx.glitch;
-        c.push([k, w * jzNovelty(hist, 'hold', k)]);
+        c.push([k, w * jzNovelty(hist, 'hold', k) * fsrSemanticWeight(semantic, 'hold', k)]);
     }
     return c.length ? rng.wpick(c) : 'still';
 }
 function jzDecorParams(rng, k) {
     return { id: k, seed: rng.int(1, 999999999), n: rng.int(1, 3) + (k === 'shapes' ? 3 : 0) + (k === 'sparks' ? 4 : 0), right: rng.chance(0.5), low: rng.chance(0.5), accent: rng.chance(0.4), corner: rng.chance(0.5), big: rng.chance(0.4), mode: rng.pick(['count', 'index']), from: rng.int(0, 20), to: rng.int(30, 999), v: rng.int(0, 5), r: rng.next() };
 }
-function jzPickDecor(rng, st, en, fx, layout, hist) {
+function jzPickDecor(rng, st, en, fx, layout, hist, semantic) {
     var count = Math.round(fx.decor * 2.8 * rng.range(0.45, 1.15)), c = [], out = [], order = jzOrder('decor'), LM = jzMeta('layout', layout), recent = {}, i, j;
     for (i = Math.max(0, hist.length - 2); i < hist.length; i++) for (j = 0; j < (hist[i].decor || []).length; j++) recent[hist[i].decor[j]] = 1;
     for (i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('decor', k);
         if (!en.decor[k] || (LM.busy && m.layer === 'back' && !m.subtle)) continue;
-        c.push([k, jzW(st.decor, k, m.w != null ? m.w * 0.5 : 0.35) * (recent[k] ? 0.35 : 1)]);
+        c.push([k, jzW(st.decor, k, m.w != null ? m.w * 0.5 : 0.35) * (recent[k] ? jzW(st, 'recentDecorWeight', 0.35) : 1) * fsrSemanticWeight(semantic, 'decor', k)]);
     }
     for (i = 0; i < count && c.length; i++) {
         var pk = rng.wpick(c);
@@ -124,7 +124,7 @@ function jzPickDecor(rng, st, en, fx, layout, hist) {
     }
     return out;
 }
-function jzPickTreat(rng, st, en, fx, layout, emph, hist) {
+function jzPickTreat(rng, st, en, fx, layout, emph, hist, semantic) {
     var LM = jzMeta('layout', layout);
     if (LM.treat === false) return 'none';
     if (!rng.chance(0.18 + 0.42 * fx.decor + (emph ? 0.15 : 0))) return 'none';
@@ -132,7 +132,7 @@ function jzPickTreat(rng, st, en, fx, layout, emph, hist) {
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('treat', k);
         if (k === 'none' || !en.treat[k] || (LM.treat === 'safe' && !m.safe)) continue;
-        c.push([k, jzW(jzBias(st, 'treat'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'treat', k)]);
+        c.push([k, jzW(jzBias(st, 'treat'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'treat', k) * fsrSemanticWeight(semantic, 'treat', k)]);
     }
     return c.length ? rng.wpick(c) : 'none';
 }
@@ -174,6 +174,7 @@ function jzSplitCut(cut, zones, st, dur, lang) {
     cut.companion = tw;
 }
 function jzPickBg(rng, st, en, fx, bgHist) {
+    if (st.background && en.bg[st.background]) return st.background;
     if (!rng.chance(0.2 + 0.35 * fx.decor + 0.2 * fx.bgSwitch)) return 'none';
     var c = [], order = jzOrder('bg'), last = bgHist.slice(Math.max(0, bgHist.length - 3));
     for (var i = 0; i < order.length; i++) {
@@ -183,11 +184,11 @@ function jzPickBg(rng, st, en, fx, bgHist) {
     }
     return c.length ? rng.wpick(c) : 'none';
 }
-function jzPickCam(rng, st, en, fx, layout, emph, hist) {
+function jzPickCam(rng, st, en, fx, layout, emph, hist, semantic) {
     var c = [], order = jzOrder('cam'), LM = jzMeta('layout', layout);
     for (var i = 0; i < order.length; i++) {
         var k = order[i], m = jzMeta('cam', k); if (!en.cam[k]) continue;
-        var w = jzW(jzBias(st, 'cam'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'cam', k);
+        var w = jzW(jzBias(st, 'cam'), k, m.w != null ? m.w : 1) * jzNovelty(hist, 'cam', k) * fsrSemanticWeight(semantic, 'cam', k);
         if (m.strong) w *= 0.25 + 0.9 * fx.motion + (emph ? 0.6 : 0);
         if (LM.cam === false && k !== 'push') w *= 0.05;
         c.push([k, w]);
@@ -260,7 +261,10 @@ function jzDetectLang(plan) {
 // o: {lyrics, title, artist, style, seed, fx, width, height, fps, bpm, starts[], enabled{group:{key:false}}, offset, lineScale, duration, extra, wa, lang}
 function jzMakePlan(o) {
     var st = JZ_DATA.styles[o.style] || JZ_DATA.styles.noir;
-    var fx = o.fx, parsed = jzParseLyrics(o.lyrics), lines = parsed.lines;
+    var fx = jzCopy(o.fx), parsed = jzParseLyrics(o.lyrics), lines = parsed.lines;
+    var fk;
+    for (fk in (st.fxMax || {})) if (st.fxMax.hasOwnProperty(fk)) fx[fk] = Math.min(fx[fk], st.fxMax[fk]);
+    for (fk in (st.fxFixed || {})) if (st.fxFixed.hasOwnProperty(fk)) fx[fk] = st.fxFixed[fk];
     if (fx.decor == null) fx.decor = 0.5; if (fx.bgSwitch == null) fx.bgSwitch = 0.35;
     var title = o.title || parsed.meta.ti || '', artist = o.artist || parsed.meta.ar || '';
     var beat = o.bpm > 0 ? 60 / o.bpm : 0, starts = [], ends = [], i, allLrc = lines.length > 0, g0, k0;
@@ -332,13 +336,14 @@ function jzMakePlan(o) {
         var lineBgP = lineBg !== 'none' ? jzPlanOf('bg', lineBg, rng, st) : {};
         for (var k = 0; k < units.length; k++) {
             var u = units[k], cs = bounds[k], ce = bounds[k + 1], dur = ce - cs, nn = jzCount(u.text);
+            var semantic = fsrSemantic(st, ln.text);
             var emph = (ln.impact && (k === 0 || u.recap));
             for (var q = 0; q < ln.emph.length; q++) if (u.text.indexOf(ln.emph[q]) >= 0) emph = true;
             var Z = zones ? jzZoneOf(zones, li) : null, LW = Z ? Z.w : W, LH = Z ? Z.h : H;
-            var layout = jzPickLayout(rng, st, en, nn, dur, hist, emph, u.recap, Z ? LH > LW : portrait);
-            var enter = jzPickEnter(rng, st, en, layout, dur, hist, emph, nn);
-            var exit = jzPickExit(rng, st, en, layout, dur, k === units.length - 1, hist);
-            var hold = jzPickHold(rng, en, fx, hist);
+            var layout = jzPickLayout(rng, st, en, nn, dur, hist, emph, u.recap, Z ? LH > LW : portrait, semantic);
+            var enter = jzPickEnter(rng, st, en, layout, dur, hist, emph, nn, semantic);
+            var exit = jzPickExit(rng, st, en, layout, dur, k === units.length - 1, hist, semantic);
+            var hold = jzPickHold(rng, en, fx, hist, semantic);
             var inDur = jzClamp(dur * 0.36, 0.12, 0.6);
             if (enter === 'type') inDur = jzClamp(nn * 0.055 + 0.1, 0.15, dur * 0.65);
             if (enter === 'assemble') inDur = jzClamp(dur * 0.45, 0.22, 0.75);
@@ -350,11 +355,11 @@ function jzMakePlan(o) {
             if (inDur + outDur > dur * 0.92) { var f = dur * 0.92 / (inDur + outDur); inDur *= f; outDur *= f; }
             var sch = schemeIdx; if (nS > 1 && k > 0 && rng.chance(0.12 * fx.bgSwitch)) sch = (schemeIdx + 1) % nS;
             var params = jzPlanOf('layout', layout, rng, st, { text: u.text, n: nn, W: LW, H: LH, dur: dur });
-            var decor = jzPickDecor(rng, st, en, fx, layout, hist);
-            var treat = jzPickTreat(rng, st, en, fx, layout, emph, hist), treatP = treat !== 'none' ? jzPlanOf('treat', treat, rng, st) : {};
+            var decor = jzPickDecor(rng, st, en, fx, layout, hist, semantic);
+            var treat = jzPickTreat(rng, st, en, fx, layout, emph, hist, semantic), treatP = treat !== 'none' ? jzPlanOf('treat', treat, rng, st) : {};
             if (k > 0 && rng.chance(0.18 * fx.bgSwitch + 0.04)) { lineBg = jzPickBg(rng, st, en, fx, bgHist); lineBgP = lineBg !== 'none' ? jzPlanOf('bg', lineBg, rng, st) : {}; }
             var LM = jzMeta('layout', layout), bg = LM.busy && !jzMeta('bg', lineBg).subtle ? 'none' : lineBg;
-            var cam = jzPickCam(rng, st, en, fx, layout, emph, hist), camP = jzPlanOf('cam', cam, rng, st);
+            var cam = jzPickCam(rng, st, en, fx, layout, emph, hist, semantic), camP = jzPlanOf('cam', cam, rng, st);
             var prevCut = plan.cuts[plan.cuts.length - 1], trans = null, transP = {}, transDur = 0;
             if (prevCut && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5) {
                 trans = jzPickTrans(rng, st, en, fx, emph, hist);
@@ -368,6 +373,7 @@ function jzMakePlan(o) {
             plan.cuts.push({ index: plan.cuts.length, text: u.text, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, dur: dur, layout: layout, enter: enter, exit: exit, hold: hold, inDur: inDur, outDur: outDur,
                 params: params, decor: decor, scheme: sch, seed: jzHash(o.seed, li, k) % 1000000, emph: emph, recap: !!u.recap, words: jzChunk(u.text), stagger: rng.range(0.025, 0.06),
                 treat: treat, treatP: treatP, bg: bg, bgP: bg === lineBg ? lineBgP : {}, cam: cam, camP: camP, trans: trans, transP: transP, transDur: transDur });
+            if (semantic) plan.cuts[plan.cuts.length - 1].semantic = semantic;
             hist.push({ layout: layout, enter: enter, exit: exit, hold: hold, treat: treat, cam: cam, trans: trans, decor: dids });
             if (zones) jzSplitCut(plan.cuts[plan.cuts.length - 1], zones, st, dur, plan.lang);
             var g = fx.glitch * (st.glitchBoost || 1);

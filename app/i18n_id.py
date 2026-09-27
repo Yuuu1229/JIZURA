@@ -11,6 +11,7 @@ MOODS = {
 }
 
 STYLES = {
+    "futureSkyRoad": ("Future Sky Road", "Langit pucat, jalan beriringan, dan harapan yang tenang. Gerak lembut dengan efek yang halus."),
     'hrRuin': ('Reruntuhan', 'Hijau keabuan pudar, merah karat, dan huruf serif yang bergema'),
     'hrNightRec': ('Rekaman Tengah Malam', 'Layar hitam pekat, putih dan merah kamera CCTV, derau statis'),
     'hrCurse': ('Surat Kutukan', 'Kertas menguning, tinta pudar, dan tulisan merah gelap'),
@@ -193,6 +194,7 @@ BODY = {
 }
 
 UI = {
+    '変更できる自動選択がありません': 'Tidak ada pilihan otomatis lain. Periksa pilihan manual dan komponen yang diaktifkan.',
     "'文字PV系の部品：使う'": "'Bagian tipografi: aktif'",
     "'文字PV系の部品：使わない（おまかせ・シャッフルで選ばれません）'": "'Bagian tipografi: nonaktif (tidak dipilih oleh Acak atau Kocok)'",
     "'キネティックの部品：使う'": "'Bagian kinetik: aktif'",

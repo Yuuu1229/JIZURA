@@ -492,18 +492,32 @@ function rerollCurrentCut(kind) {
   const cut = J.cutAt(S.plan, S.t);
   const k = lyricCutK(cut);
   if (!cut || k < 0) { toast('この位置のカットは抽選できません'); return; }
-  remember();
   const n = [...String(cut.text || '').replace(/\s+/g, '')].length;
   const groups = kind === 'omakase'
     ? CHIP_GROUPS.map(x => x[0])
     : ['layout', 'enter', 'hold', 'exit', 'cam', 'trans'];
   const t0 = S.t;
-  groups.forEach(g => {
-    const allowNone = g === 'decor' || g === 'trans';
-    const key = pickEnabledTech(g, { avoid: kind === 'omakase' ? cutGroupVal(cut, g) : null, allowNone, n });
-    if (key) setCutTech(cut.line, k, g, key);
-  });
-  markCutQuiet(cut.line, k, groups, true);
+  if (S.project.style === 'futureSkyRoad') {
+    const slot = cutTechSlot(cut.line, k), quiet = cutQuietSlot(cut.line, k);
+    const ov = (S.project.overrides || {})[cut.line] || {};
+    // Explicit menu/line choices stay pinned. Prior automatic rerolls are marked
+    // quiet by the existing UI, so they can be randomized again.
+    const fixed = groups.filter(g => ov.lock || ov[g] != null || (slot[g] && !quiet[g]));
+    const history = S.plan.cuts.filter(c => c.index < cut.index).slice(-6);
+    const picks = J.rerollFutureSkyCut(S.project, cut, groups, fixed, history);
+    if (!Object.keys(picks).length) { toast('変更できる自動選択がありません'); return; }
+    remember();
+    for (const [g, key] of Object.entries(picks)) setCutTech(cut.line, k, g, key);
+    markCutQuiet(cut.line, k, Object.keys(picks), true);
+  } else {
+    remember();
+    groups.forEach(g => {
+      const allowNone = g === 'decor' || g === 'trans';
+      const key = pickEnabledTech(g, { avoid: kind === 'omakase' ? cutGroupVal(cut, g) : null, allowNone, n });
+      if (key) setCutTech(cut.line, k, g, key);
+    });
+    markCutQuiet(cut.line, k, groups, true);
+  }
   closeCutPick();
   replan();
   commit();

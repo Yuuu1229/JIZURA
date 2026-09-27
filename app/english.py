@@ -161,6 +161,7 @@ BODY = {
 }
 
 UI = {
+    '変更できる自動選択がありません': 'No different automatic choices available; check manual selections and enabled components.',
     "'文字PV系の部品：使う'": "'Typographic parts: on'",
     "'文字PV系の部品：使わない（おまかせ・シャッフルで選ばれません）'": "'Typographic parts: off (not picked by Randomize or Shuffle)'",
     "'キネティックの部品：使う'": "'Kinetic parts: on'",

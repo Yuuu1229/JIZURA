@@ -8,6 +8,16 @@ JIZURA のバージョンは `メジャー.マイナー.パッチ` の形で付�
 
 いまのバージョンはリポジトリ直下の `VERSION` に書いてあり、ブラウザ版の左上（JIZURA のロゴの横）、AE パネル（スクリプト版の見出しと、診断レポート）に表示されます。保存したプロジェクトファイルと AE 用 JSON にも `appVersion` として記録されます。
 
+## Unreleased — fork additions
+
+- **Future Sky Road per-cut rerolls**: Randomize/Shuffle this cut now reuse planner weights with the current cut’s lyric tags, preserve explicit manual choices, and avoid identical recipes when alternatives are available. Other styles retain their existing reroll behavior.
+
+- **Future Sky Road Phase 3**: local multilingual keyword tags bias eligible component weights while preserving randomized choices and explicit overrides. Adds restrained Twin Sway, stronger decoration repetition penalties, two automatic lyric samples, and a long-text grouping fix for paired layouts. Browser and AE share the same tag matcher; no external AI API.
+
+- **Future Sky Road Phase 2**: five curated layouts, six optional atmospheric decorations, soft motion and a manually assigned seven-lyric example. Road perspective is independent of the sky background; legacy components remain available. No semantic keyword detection.
+
+- **Future Sky Road**: a pale sky / road-trip style with spacious typography, paired paths, mist and gentle motion. Includes native browser and AE parts, a curated effect profile, localized descriptions and regenerated browser / ScriptUI / CEP editions. Existing styles retain their original planning behavior.
+
 ## v0.9.0 — 2026-09-26
 
 ### 追加

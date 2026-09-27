@@ -12,6 +12,7 @@ MOODS = {
 }
 
 STYLES = {
+    "futureSkyRoad": ("Future Sky Road", "Bầu trời nhạt màu, hai lối song hành và hy vọng lặng yên. Chuyển động nhẹ với hiệu ứng tiết chế."),
     'hrRuin': ('Phế tích', 'Xanh xám bạc màu, đỏ gỉ sét và chữ có chân vang vọng'),
     'hrNightRec': ('Băng ghi hình nửa đêm', 'Màn hình đen kịt, trắng và đỏ của camera giám sát, nhiễu sóng'),
     'hrCurse': ('Bức thư nguyền rủa', 'Giấy ố vàng, mực phai và nét chữ đỏ sẫm'),
@@ -251,6 +252,7 @@ BODY = {
 }
 
 UI = {
+    '変更できる自動選択がありません': 'Không có lựa chọn tự động khác. Hãy kiểm tra lựa chọn thủ công và các thành phần đang bật.',
     'おまかせ': 'Ngẫu nhiên', 'シャッフル': 'Sắp xếp ngẫu nhiên',
     "'文字PV系の部品：使う'": "'Thành phần kiểu chữ: bật'",
     "'文字PV系の部品：使わない（おまかせ・シャッフルで選ばれません）'": "'Thành phần kiểu chữ: tắt (Ngẫu nhiên và Sắp xếp ngẫu nhiên sẽ không chọn)'",

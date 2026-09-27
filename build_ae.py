@@ -28,6 +28,8 @@ if a.lang == 'en':
             if key in data['meta'].get(group, {}): data['meta'][group][key]['name'] = name
 body = '\n'.join(localize_ae(open(f'ae/{p}.jsx', encoding='utf-8').read()) if a.lang == 'en' and p == '90_ui' else open(f'ae/{p}.jsx', encoding='utf-8').read() for p in parts)
 VERSION = open('VERSION', encoding='utf-8').read().strip()
+# Use the exact same ES3 keyword matcher and multiplier reducer in both engines.
+body = open('src/07c_lyric_weights.js', encoding='utf-8').read() + '\n' + body
 body = body.replace('@VERSION@', VERSION)
 head = '''/*  JIZURA 字面 — lyric motion panel for Adobe After Effects  (v@VERSION@)
     Put this file in:  After Effects <version>/Support Files/Scripts/ScriptUI Panels/

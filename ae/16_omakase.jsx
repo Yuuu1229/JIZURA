@@ -149,5 +149,6 @@ function jzOmakase(curMood, curStyle, rnd, o) {
     for (k in M.fx) if (M.fx.hasOwnProperty(k)) fx[k] = range(M.fx[k]);
     var r = { mood: mood, style: style, fx: fx, onTwos: rnd() < 0.75, flash: rnd() < 0.65, hud: pick([0, 0, 1, 2]), seed: Math.floor(rnd() * 999999999), palette: null };
     if (rnd() < 0.38) r.palette = jzRandomPalette(JZ_DATA.styles[style].schemes[0].bg, rnd);
+    if (JZ_DATA.styles[style].parts) r.palette = null;
     return r;
 }
